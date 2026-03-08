@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Renders (large files — don't commit)
+output/
+renders/
+frames/
+*.png
+*.jpg
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+
+# Except preset thumbnails
+!presets/thumbnails/*.png
+
+# Logs
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment
+.env
