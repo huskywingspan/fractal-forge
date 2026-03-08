@@ -183,5 +183,199 @@ def resolutions():
     console.print("\nUsage: [dim]fractalforge render --preset superwide -o output/uw.png[/]")
 
 
+@cli.command()
+@click.argument("path", type=click.Path(exists=True))
+@click.option(
+    "--frames-dir", "-f", default=None, type=click.Path(),
+    help="Output directory for frames (default: output/<name>_frames).",
+)
+@click.option(
+    "--output", "-o", default=None, type=click.Path(),
+    help="Output video file (default: output/<name>.mp4).",
+)
+@click.option(
+    "--encode-preset", "-e", default="quality",
+    type=click.Choice(["preview", "quality", "lossless", "prores"], case_sensitive=False),
+    help="Video encoding preset.",
+)
+@click.option("--cpu", is_flag=True, default=False, help="Force CPU rendering.")
+@click.option("--frames-only", is_flag=True, default=False, help="Render frames only, skip encoding.")
+@click.option("--resume", is_flag=True, default=False, help="Resume an interrupted render (skip existing frames).")
+def zoom(
+    path: str,
+    frames_dir: str | None,
+    output: str | None,
+    encode_preset: str,
+    cpu: bool,
+    frames_only: bool,
+    resume: bool,
+):
+    """Render a zoom video from a zoom path JSON file.
+
+    PATH is the zoom path JSON file (see fractalforge zoom-template for format).
+    """
+    from fractalforge.artist.zoompath import ZoomPath
+    from fractalforge.engine.mandelbrot import CUDA_AVAILABLE
+    from fractalforge.render.sequence import render_sequence
+    from fractalforge.render.video import encode_video, check_ffmpeg, get_video_info
+
+    zoom_path = ZoomPath.load(Path(path))
+    use_gpu = not cpu and CUDA_AVAILABLE
+    backend = "GPU (CUDA)" if use_gpu else "CPU"
+
+    # Default output paths
+    if frames_dir is None:
+        frames_dir = f"output/{zoom_path.name}_frames"
+    if output is None:
+        output = f"output/{zoom_path.name}.mp4"
+
+    frames_path = Path(frames_dir)
+    video_path = Path(output)
+
+    console.print(f"[bold cyan]FractalForge[/] v{__version__} -- Zoom Render")
+    console.print(f"  Path:      {path}")
+    console.print(f"  Name:      {zoom_path.name}")
+    console.print(f"  Size:      {zoom_path.width}x{zoom_path.height}")
+    console.print(f"  Frames:    {zoom_path.total_frames} ({zoom_path.duration_seconds:.1f}s at {zoom_path.fps}fps)")
+    console.print(f"  Keyframes: {len(zoom_path.keyframes)}")
+
+    if zoom_path.keyframes:
+        kf_first = zoom_path.keyframes[0]
+        kf_last = zoom_path.keyframes[-1]
+        console.print(f"  Zoom:      {kf_first.zoom:.2e} -> {kf_last.zoom:.2e}")
+    console.print(f"  Backend:   {backend}")
+    console.print(f"  Frames ->  {frames_path}")
+    if not frames_only:
+        console.print(f"  Video ->   {video_path} ({encode_preset})")
+    console.print()
+
+    # Render frames
+    start = time.perf_counter()
+    last_print_time = [start]
+
+    def on_progress(frame_idx, total, elapsed, fps, skipped=False):
+        now = time.perf_counter()
+        # Print every 2 seconds or on last frame
+        if now - last_print_time[0] >= 2.0 or frame_idx == total - 1:
+            pct = (frame_idx + 1) / total * 100
+            status = "skipped" if skipped else f"{fps:.1f} fps"
+            remaining = (total - frame_idx - 1) / fps if fps > 0 else 0
+            console.print(
+                f"  [{pct:5.1f}%] Frame {frame_idx + 1}/{total}  "
+                f"({status}, {elapsed:.0f}s elapsed, ~{remaining:.0f}s remaining)",
+                highlight=False,
+            )
+            last_print_time[0] = now
+
+    console.print("[bold]Rendering frames...[/]")
+    render_sequence(
+        zoom_path=zoom_path,
+        output_dir=frames_path,
+        use_gpu=use_gpu,
+        skip_existing=resume,
+        on_progress=on_progress,
+    )
+
+    render_elapsed = time.perf_counter() - start
+    avg_fps = zoom_path.total_frames / render_elapsed if render_elapsed > 0 else 0
+    console.print(f"\n[green]Done:[/] {zoom_path.total_frames} frames in {render_elapsed:.1f}s ({avg_fps:.1f} avg fps)")
+
+    # Encode video
+    if not frames_only:
+        if not check_ffmpeg():
+            console.print("[red]Error:[/] FFmpeg not found -- cannot encode video.")
+            console.print("  Install FFmpeg or use --frames-only to skip encoding.")
+            raise SystemExit(1)
+
+        console.print(f"\n[bold]Encoding video ({encode_preset})...[/]")
+        encode_start = time.perf_counter()
+        video_path = encode_video(
+            frames_dir=frames_path,
+            output_path=video_path,
+            fps=zoom_path.fps,
+            preset=encode_preset,
+            overwrite=True,
+        )
+        encode_elapsed = time.perf_counter() - encode_start
+
+        info = get_video_info(video_path)
+        file_size = video_path.stat().st_size
+        size_str = f"{file_size / 1_048_576:.1f} MB" if file_size >= 1_048_576 else f"{file_size / 1024:.0f} KB"
+
+        console.print(f"[green]Done:[/] Encoded in {encode_elapsed:.1f}s -> {video_path} ({size_str})")
+
+        total_elapsed = time.perf_counter() - start
+        console.print(f"\n[bold green]Total time:[/] {total_elapsed:.1f}s")
+
+
+@cli.command()
+@click.argument("frames_dir", type=click.Path(exists=True))
+@click.option("--output", "-o", required=True, type=click.Path(), help="Output video file path.")
+@click.option("--fps", default=60, type=int, help="Frames per second.")
+@click.option(
+    "--preset", "-e", default="quality",
+    type=click.Choice(["preview", "quality", "lossless", "prores"], case_sensitive=False),
+    help="Encoding preset.",
+)
+def encode(frames_dir: str, output: str, fps: int, preset: str):
+    """Encode a directory of frame PNGs into a video file.
+
+    FRAMES_DIR is the directory containing frame_000000.png, frame_000001.png, etc.
+    """
+    from fractalforge.render.video import encode_video, check_ffmpeg, get_video_info
+
+    if not check_ffmpeg():
+        console.print("[red]Error:[/] FFmpeg not found.")
+        raise SystemExit(1)
+
+    console.print(f"[bold cyan]FractalForge[/] v{__version__} -- Encode")
+    console.print(f"  Frames:  {frames_dir}")
+    console.print(f"  Output:  {output}")
+    console.print(f"  FPS:     {fps}")
+    console.print(f"  Preset:  {preset}")
+    console.print()
+
+    start = time.perf_counter()
+    video_path = encode_video(
+        frames_dir=Path(frames_dir),
+        output_path=Path(output),
+        fps=fps,
+        preset=preset,
+        overwrite=True,
+    )
+    elapsed = time.perf_counter() - start
+
+    file_size = video_path.stat().st_size
+    size_str = f"{file_size / 1_048_576:.1f} MB" if file_size >= 1_048_576 else f"{file_size / 1024:.0f} KB"
+
+    console.print(f"[green]Done:[/] Encoded in {elapsed:.1f}s -> {video_path} ({size_str})")
+
+
+@cli.command(name="zoom-template")
+@click.option("--output", "-o", default="zoom_path.json", type=click.Path(), help="Output JSON path.")
+def zoom_template(output: str):
+    """Generate a sample zoom path JSON template."""
+    from fractalforge.artist.zoompath import ZoomPath, Keyframe
+
+    sample = ZoomPath(
+        name="sample_zoom",
+        fps=60,
+        width=1920,
+        height=1080,
+        keyframes=[
+            Keyframe(frame=0, center_re=-0.75, center_im=0.0, zoom=1.0, max_iter=500, palette="ocean"),
+            Keyframe(frame=300, center_re=-0.7435669, center_im=0.1314023, zoom=1000.0, max_iter=2000, palette="ocean"),
+            Keyframe(frame=600, center_re=-0.7435669, center_im=0.1314023, zoom=1e6, max_iter=5000, palette="nebula"),
+        ],
+    )
+
+    output_path = Path(output)
+    sample.save(output_path)
+    console.print(f"[green]Done:[/] Template saved to {output_path}")
+    console.print(f"  {len(sample.keyframes)} keyframes, {sample.total_frames} frames, {sample.duration_seconds:.1f}s")
+    console.print("\nEdit the JSON, then run:")
+    console.print(f"  [dim]fractalforge zoom {output_path}[/]")
+
+
 if __name__ == "__main__":
     cli()

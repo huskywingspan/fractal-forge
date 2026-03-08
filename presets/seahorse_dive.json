@@ -1,0 +1,26 @@
+{
+  "name": "seahorse_dive",
+  "fps": 60,
+  "width": 1280,
+  "height": 720,
+  "keyframes": [
+    {
+      "frame": 0,
+      "center_re": -0.75,
+      "center_im": 0.0,
+      "zoom": 1.0,
+      "max_iter": 500,
+      "palette": "ocean",
+      "rotation": 0.0
+    },
+    {
+      "frame": 300,
+      "center_re": -0.7435669,
+      "center_im": 0.1314023,
+      "zoom": 50000.0,
+      "max_iter": 3000,
+      "palette": "ocean",
+      "rotation": 0.0
+    }
+  ]
+}

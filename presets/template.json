@@ -1,0 +1,35 @@
+{
+  "name": "sample_zoom",
+  "fps": 60,
+  "width": 1920,
+  "height": 1080,
+  "keyframes": [
+    {
+      "frame": 0,
+      "center_re": -0.75,
+      "center_im": 0.0,
+      "zoom": 1.0,
+      "max_iter": 500,
+      "palette": "ocean",
+      "rotation": 0.0
+    },
+    {
+      "frame": 300,
+      "center_re": -0.7435669,
+      "center_im": 0.1314023,
+      "zoom": 1000.0,
+      "max_iter": 2000,
+      "palette": "ocean",
+      "rotation": 0.0
+    },
+    {
+      "frame": 600,
+      "center_re": -0.7435669,
+      "center_im": 0.1314023,
+      "zoom": 1000000.0,
+      "max_iter": 5000,
+      "palette": "nebula",
+      "rotation": 0.0
+    }
+  ]
+}

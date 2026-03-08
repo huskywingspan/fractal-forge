@@ -25,13 +25,13 @@
 
 | ID | Item | Status | Notes |
 |----|------|--------|-------|
-| P2-01 | Keyframe data model (center, zoom, rotation, palette) | 🔲 Todo | |
-| P2-02 | Zoom path interpolation (exponential zoom, smooth easing) | 🔲 Todo | |
-| P2-03 | Frame sequence renderer (parallel frame dispatch) | 🔲 Todo | |
-| P2-04 | FFmpeg video encoder integration | 🔲 Todo | |
-| P2-05 | CLI: `fractalforge zoom` command | 🔲 Todo | |
-| P2-06 | CLI: `fractalforge encode` (frames → video) | 🔲 Todo | |
-| P2-07 | Render resume/checkpoint (restart interrupted renders) | 🔲 Todo | |
+| P2-01 | Keyframe data model (center, zoom, rotation, palette) | ✅ Done | Dataclass with JSON save/load |
+| P2-02 | Zoom path interpolation (exponential zoom, smooth easing) | ✅ Done | Exp zoom, linear position, linear max_iter |
+| P2-03 | Frame sequence renderer (parallel frame dispatch) | ✅ Done | Progress tracking, per-frame callback |
+| P2-04 | FFmpeg video encoder integration | ✅ Done | 4 presets: preview, quality, lossless, prores |
+| P2-05 | CLI: `fractalforge zoom` command | ✅ Done | Full pipeline: frames + encode, --resume flag |
+| P2-06 | CLI: `fractalforge encode` (frames → video) | ✅ Done | Standalone re-encode from frames dir |
+| P2-07 | Render resume/checkpoint (restart interrupted renders) | ✅ Done | skip_existing flag, instant skip on resume |
 | P2-08 | Resolution presets (1080p, 2K UW 32:9, 4K) | ✅ Done | Moved to P1, 7 presets incl. superwide 32:9 |
 
 ## Phase 3: Deep Zoom (Perturbation Theory)

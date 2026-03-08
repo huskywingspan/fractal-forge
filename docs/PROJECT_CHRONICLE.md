@@ -125,6 +125,24 @@
 - 4K is under 1.5s — very comfortable for video frame sequences
 - VRAM usage is minimal at these resolutions (well under 1 GB)
 
+### PERF-002: Zoom Video Pipeline (720p, Phase 2)
+**Date:** 2026-03-08
+**Test:** Seahorse Valley dive, 301 frames (5s @ 60fps), 1x -> 50,000x zoom, 720p
+
+| Stage | Time | Rate |
+|-------|------|------|
+| Frame render (301 frames) | 41.7s | 7.2 fps |
+| Encode (preview/x264 crf23) | 2.2s | 17.8 MB output |
+| Encode (quality/x264 crf18) | 4.2s | 24.6 MB output |
+| Resume (skip existing) | 0.0s | instant |
+| **Total (render + encode)** | **44.4s** | |
+
+**Observations:**
+- GPU render is the bottleneck, not encoding
+- At 720p/7.2fps, a 1-minute video (3,600 frames) takes ~8.3 minutes
+- At 1080p, expect ~5fps, so 1 min video ~12 min render
+- Resume/checkpoint works reliably for interrupted renders
+
 ---
 
 ## Bugs & Incidents
