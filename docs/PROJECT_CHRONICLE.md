@@ -109,7 +109,21 @@
 
 ## Performance Notes
 
-*No entries yet — will track GPU kernel timings, frame render benchmarks, memory usage patterns.*
+### PERF-001: Baseline Render Times (RTX 3070, Phase 1)
+**Date:** 2026-03-08
+**Hardware:** RTX 3070, 8 GB VRAM, compute 8.6
+
+| Resolution | Zoom | Max Iter | Time | File Size |
+|-----------|------|----------|------|-----------|
+| 1920x1080 (1080p) | 1x | 1000 | 0.59s | 201 KB |
+| 1920x1080 (1080p) | 200x | 2000 | 0.60s | ~200 KB |
+| 5120x1440 (32:9 superwide) | 500x | 2000 | 1.46s | 4.2 MB |
+| 3840x2160 (4K) | 100x | 3000 | 1.39s | 1.1 MB |
+
+**Observations:**
+- Render time scales roughly with pixel count, not zoom depth (at standard precision)
+- 4K is under 1.5s — very comfortable for video frame sequences
+- VRAM usage is minimal at these resolutions (well under 1 GB)
 
 ---
 

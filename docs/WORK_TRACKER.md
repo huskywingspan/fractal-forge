@@ -11,13 +11,13 @@
 | ID | Item | Status | Notes |
 |----|------|--------|-------|
 | P1-01 | Project scaffolding (repo, venv, pyproject.toml) | ✅ Done | |
-| P1-02 | Numba CUDA Mandelbrot kernel (basic escape time) | 🔲 Todo | |
-| P1-03 | Smooth iteration count (continuous coloring) | 🔲 Todo | |
-| P1-04 | Palette system (gradient interpolation, preset palettes) | 🔲 Todo | |
-| P1-05 | Frame renderer (kernel → colored image → PNG) | 🔲 Todo | |
-| P1-06 | CLI: `fractalforge render` command | 🔲 Todo | |
-| P1-07 | CLI: `fractalforge info` (GPU info, capabilities) | 🔲 Todo | |
-| P1-08 | Configuration system (render params, output settings) | 🔲 Todo | |
+| P1-02 | Numba CUDA Mandelbrot kernel (basic escape time) | ✅ Done | GPU + CPU fallback |
+| P1-03 | Smooth iteration count (continuous coloring) | ✅ Done | Escape radius 256 for smooth gradients |
+| P1-04 | Palette system (gradient interpolation, preset palettes) | ✅ Done | 5 palettes: ocean, fire, electric, monochrome, nebula |
+| P1-05 | Frame renderer (kernel → colored image → PNG) | ✅ Done | Full pipeline working |
+| P1-06 | CLI: `fractalforge render` command | ✅ Done | With --preset, --cpu flags |
+| P1-07 | CLI: `fractalforge info` (GPU info, capabilities) | ✅ Done | |
+| P1-08 | Configuration system (render params, output settings) | ✅ Done | Pydantic models, 7 resolution presets |
 
 ## Phase 2: Zoom Video Pipeline
 
@@ -32,7 +32,7 @@
 | P2-05 | CLI: `fractalforge zoom` command | 🔲 Todo | |
 | P2-06 | CLI: `fractalforge encode` (frames → video) | 🔲 Todo | |
 | P2-07 | Render resume/checkpoint (restart interrupted renders) | 🔲 Todo | |
-| P2-08 | Resolution presets (1080p, 2K UW 32:9, 4K) | 🔲 Todo | |
+| P2-08 | Resolution presets (1080p, 2K UW 32:9, 4K) | ✅ Done | Moved to P1, 7 presets incl. superwide 32:9 |
 
 ## Phase 3: Deep Zoom (Perturbation Theory)
 
