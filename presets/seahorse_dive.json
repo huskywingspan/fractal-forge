@@ -15,10 +15,10 @@
     },
     {
       "frame": 300,
-      "center_re": -0.7435669,
-      "center_im": 0.1314023,
+      "center_re": -0.74364388703,
+      "center_im": 0.13182590421,
       "zoom": 50000.0,
-      "max_iter": 3000,
+      "max_iter": 5000,
       "palette": "ocean",
       "rotation": 0.0
     }
