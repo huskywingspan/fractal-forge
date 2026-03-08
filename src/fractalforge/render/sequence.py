@@ -7,7 +7,6 @@ and configurable output format.
 import time
 from pathlib import Path
 
-import numpy as np
 from PIL import Image
 
 from fractalforge.artist.palette import get_palette
@@ -21,6 +20,7 @@ def render_sequence(
     output_dir: Path,
     use_gpu: bool | None = None,
     skip_existing: bool = True,
+    supersampling: int = 1,
     on_progress: callable = None,
 ) -> list[Path]:
     """Render all frames in a zoom path to individual PNG files.
@@ -30,6 +30,7 @@ def render_sequence(
         output_dir: Directory to write frame PNGs (frame_000000.png, etc.).
         use_gpu: Force GPU (True), CPU (False), or auto-detect (None).
         skip_existing: Skip frames that already exist on disk (checkpoint resume).
+        supersampling: Supersampling factor (1=off, 2=4x SSAA, 3=9x).
         on_progress: Callback(frame_idx, total_frames, elapsed, fps) called after each frame.
 
     Returns:
@@ -43,6 +44,10 @@ def render_sequence(
     rendered_count = 0
     skipped_count = 0
     start_time = time.perf_counter()
+
+    ss = max(1, supersampling)
+    render_w = zoom_path.width * ss
+    render_h = zoom_path.height * ss
 
     for frame_idx in range(total):
         frame_path = output_dir / f"frame_{frame_idx:06d}.png"
@@ -60,18 +65,23 @@ def render_sequence(
         params = zoom_path.interpolate(frame_idx)
         palette = get_palette(params["palette"])
 
-        # Render
+        # Render at supersampled resolution
         smooth_data = render_frame(
             center_re=params["center_re"],
             center_im=params["center_im"],
             zoom=params["zoom"],
-            width=zoom_path.width,
-            height=zoom_path.height,
+            width=render_w,
+            height=render_h,
             max_iter=params["max_iter"],
             use_gpu=use_gpu,
         )
 
         img = smooth_to_image(smooth_data, palette)
+
+        # Downsample if supersampled
+        if ss > 1:
+            img = img.resize((zoom_path.width, zoom_path.height), Image.LANCZOS)
+
         img.save(frame_path, format="PNG")
         rendered_count += 1
 

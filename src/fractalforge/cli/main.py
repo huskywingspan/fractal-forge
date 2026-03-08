@@ -45,6 +45,7 @@ def cli():
     help="Resolution preset (e.g. 1080p, 4k, superwide).",
 )
 @click.option("--cpu", is_flag=True, default=False, help="Force CPU rendering (no GPU).")
+@click.option("--ss", default=1, type=click.IntRange(1, 4), help="Supersampling (1=off, 2=4x AA, 3=9x).")
 @click.option(
     "--output", "-o", default="output/frame.png", type=click.Path(), help="Output file path."
 )
@@ -58,6 +59,7 @@ def render(
     palette: str,
     preset: str | None,
     cpu: bool,
+    ss: int,
     output: str,
 ):
     """Render a single Mandelbrot frame to PNG."""
@@ -92,6 +94,8 @@ def render(
         console.print(f"  Preset:    {preset}")
     console.print(f"  Max iter:  {config.max_iter}")
     console.print(f"  Palette:   {config.palette}")
+    if ss > 1:
+        console.print(f"  SSAA:      {ss}x ({ss*ss} samples/pixel)")
     console.print(f"  Backend:   {backend}")
     console.print(f"  Output:    {output}")
     console.print()
@@ -107,6 +111,7 @@ def render(
         max_iter=config.max_iter,
         palette_name=config.palette,
         use_gpu=use_gpu,
+        supersampling=ss,
     )
     elapsed = time.perf_counter() - start
 
@@ -199,6 +204,7 @@ def resolutions():
     help="Video encoding preset.",
 )
 @click.option("--cpu", is_flag=True, default=False, help="Force CPU rendering.")
+@click.option("--ss", default=1, type=click.IntRange(1, 4), help="Supersampling (1=off, 2=4x AA, 3=9x).")
 @click.option("--frames-only", is_flag=True, default=False, help="Render frames only, skip encoding.")
 @click.option("--resume", is_flag=True, default=False, help="Resume an interrupted render (skip existing frames).")
 def zoom(
@@ -207,6 +213,7 @@ def zoom(
     output: str | None,
     encode_preset: str,
     cpu: bool,
+    ss: int,
     frames_only: bool,
     resume: bool,
 ):
@@ -243,6 +250,8 @@ def zoom(
         kf_first = zoom_path.keyframes[0]
         kf_last = zoom_path.keyframes[-1]
         console.print(f"  Zoom:      {kf_first.zoom:.2e} -> {kf_last.zoom:.2e}")
+    if ss > 1:
+        console.print(f"  SSAA:      {ss}x ({ss*ss} samples/pixel)")
     console.print(f"  Backend:   {backend}")
     console.print(f"  Frames ->  {frames_path}")
     if not frames_only:
@@ -273,6 +282,7 @@ def zoom(
         output_dir=frames_path,
         use_gpu=use_gpu,
         skip_existing=resume,
+        supersampling=ss,
         on_progress=on_progress,
     )
 

@@ -19,6 +19,7 @@ def render_single(
     palette_name: str = "ocean",
     interior_color: tuple[int, int, int] = (0, 0, 0),
     use_gpu: bool | None = None,
+    supersampling: int = 1,
 ) -> Image.Image:
     """Render a single Mandelbrot frame as a PIL Image.
 
@@ -32,15 +33,30 @@ def render_single(
         palette_name: Name of a built-in palette.
         interior_color: RGB for interior (non-escaping) points.
         use_gpu: Force GPU (True), CPU (False), or auto-detect (None).
+        supersampling: Supersampling factor (1=off, 2=4x SSAA, 3=9x).
+            Renders at factor*width x factor*height then downsamples with
+            a box filter, averaging colors to eliminate aliasing noise.
 
     Returns:
-        PIL Image (RGB).
+        PIL Image (RGB) at the requested width x height.
     """
     palette = get_palette(palette_name)
+
+    # Render at supersampled resolution
+    ss = max(1, supersampling)
+    render_w = width * ss
+    render_h = height * ss
+
     smooth_data = render_frame(
-        center_re, center_im, zoom, width, height, max_iter, use_gpu=use_gpu
+        center_re, center_im, zoom, render_w, render_h, max_iter, use_gpu=use_gpu
     )
-    return smooth_to_image(smooth_data, palette, interior_color)
+    img = smooth_to_image(smooth_data, palette, interior_color)
+
+    # Downsample if supersampled (box filter = proper area average)
+    if ss > 1:
+        img = img.resize((width, height), Image.LANCZOS)
+
+    return img
 
 
 def render_and_save(
@@ -54,6 +70,7 @@ def render_and_save(
     palette_name: str = "ocean",
     interior_color: tuple[int, int, int] = (0, 0, 0),
     use_gpu: bool | None = None,
+    supersampling: int = 1,
 ) -> Path:
     """Render a single frame and save to disk.
 
@@ -77,6 +94,7 @@ def render_and_save(
         palette_name=palette_name,
         interior_color=interior_color,
         use_gpu=use_gpu,
+        supersampling=supersampling,
     )
     img.save(output_path)
     return output_path
