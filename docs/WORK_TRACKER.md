@@ -26,7 +26,7 @@
 | ID | Item | Status | Notes |
 |----|------|--------|-------|
 | P2-01 | Keyframe data model (center, zoom, rotation, palette) | ✅ Done | Dataclass with JSON save/load |
-| P2-02 | Zoom path interpolation (exponential zoom, smooth easing) | ✅ Done | Exp zoom, linear position, linear max_iter |
+| P2-02 | Zoom path interpolation (exponential zoom, smooth easing) | ✅ Done | Exp zoom, zoom-weighted position interp (AD-005), linear max_iter |
 | P2-03 | Frame sequence renderer (parallel frame dispatch) | ✅ Done | Progress tracking, per-frame callback |
 | P2-04 | FFmpeg video encoder integration | ✅ Done | 4 presets: preview, quality, lossless, prores |
 | P2-05 | CLI: `fractalforge zoom` command | ✅ Done | Full pipeline: frames + encode, --resume flag |
@@ -58,7 +58,7 @@
 | P4-03 | Orbit trap coloring modes | 🔲 Todo | |
 | P4-04 | Motion blur between frames | 🔲 Todo | |
 | P4-05 | Vignette and color grading post-process | 🔲 Todo | |
-| P4-06 | Anti-aliasing (supersampling) | 🔲 Todo | |
+| P4-06 | Anti-aliasing (supersampling) | ✅ Done | 2x SSAA via --ss flag, Lanczos downsample |
 | P4-07 | Palette editor / designer tool | 🔲 Todo | |
 
 ## Phase 5: Production & Scaling
