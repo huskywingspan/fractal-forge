@@ -1,7 +1,8 @@
 """Frame sequence renderer -- renders all frames for a zoom path.
 
 Supports progress tracking, checkpointing (skip already-rendered frames),
-and configurable output format.
+and configurable output format. Automatically switches to perturbation
+theory for deep zoom frames (zoom >= 1e13).
 """
 
 import time
@@ -13,6 +14,9 @@ from fractalforge.artist.palette import get_palette
 from fractalforge.artist.zoompath import ZoomPath
 from fractalforge.engine.coloring import smooth_to_image
 from fractalforge.engine.mandelbrot import render_frame
+
+# Zoom threshold matching frame_renderer.py
+_DEEP_ZOOM_THRESHOLD = 1e13
 
 
 def render_sequence(
@@ -66,15 +70,30 @@ def render_sequence(
         palette = get_palette(params["palette"])
 
         # Render at supersampled resolution
-        smooth_data = render_frame(
-            center_re=params["center_re"],
-            center_im=params["center_im"],
-            zoom=params["zoom"],
-            width=render_w,
-            height=render_h,
-            max_iter=params["max_iter"],
-            use_gpu=use_gpu,
-        )
+        # Auto-select engine: perturbation theory for deep zoom
+        frame_zoom = params["zoom"]
+        if frame_zoom >= _DEEP_ZOOM_THRESHOLD:
+            from fractalforge.engine.perturbation import render_frame_perturbation
+
+            smooth_data = render_frame_perturbation(
+                center_re=str(params["center_re"]),
+                center_im=str(params["center_im"]),
+                zoom=frame_zoom,
+                width=render_w,
+                height=render_h,
+                max_iter=params["max_iter"],
+                use_gpu=use_gpu,
+            )
+        else:
+            smooth_data = render_frame(
+                center_re=params["center_re"],
+                center_im=params["center_im"],
+                zoom=frame_zoom,
+                width=render_w,
+                height=render_h,
+                max_iter=params["max_iter"],
+                use_gpu=use_gpu,
+            )
 
         img = smooth_to_image(smooth_data, palette)
 

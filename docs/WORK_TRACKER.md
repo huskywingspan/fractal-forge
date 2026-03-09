@@ -40,12 +40,12 @@
 
 | ID | Item | Status | Notes |
 |----|------|--------|-------|
-| P3-01 | Arbitrary precision reference orbit (mpmath) | 🔲 Todo | |
-| P3-02 | Perturbation kernel (delta orbit iteration on GPU) | 🔲 Todo | |
-| P3-03 | Glitch detection and correction | 🔲 Todo | |
-| P3-04 | Series approximation (skip early iterations) | 🔲 Todo | |
-| P3-05 | Rebasing logic (handle delta orbit divergence) | 🔲 Todo | |
-| P3-06 | Automatic precision selection (standard vs PT by zoom) | 🔲 Todo | |
+| P3-01 | Arbitrary precision reference orbit (mpmath) | ✅ Done | precision.py, auto-precision, validation util |
+| P3-02 | Perturbation kernel (delta orbit iteration on GPU) | ✅ Done | CUDA + CPU kernels, smooth coloring |
+| P3-03 | Glitch detection and correction | ✅ Done | Per-pixel flag, up to 3 correction passes |
+| P3-04 | Series approximation (skip early iterations) | ✅ Done | 3rd-order Taylor, auto-enabled at zoom >= 1e8 |
+| P3-05 | Rebasing logic (handle delta orbit divergence) | ✅ Done | Falls back to standard iteration after ref escape |
+| P3-06 | Automatic precision selection (standard vs PT by zoom) | ✅ Done | Auto-switch at zoom >= 1e13, string coord support |
 
 ## Phase 4: Artistic Layer
 

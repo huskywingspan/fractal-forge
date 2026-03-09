@@ -4,7 +4,7 @@
 >
 > **For Copilot Agents:** Reference this document when working on FractalForge to avoid repeating past mistakes and understand why things are built the way they are.
 >
-> **Version:** 2.0 (March 8, 2026) -- Phase 1+2 complete, polish pass done. Zoom-weighted interpolation, supersampling AA shipped.
+> **Version:** 3.0 (March 8, 2026) -- Phase 3 complete. Perturbation theory engine with series approximation, glitch correction, and auto-precision selection.
 
 ---
 
@@ -19,7 +19,7 @@
 | **Video Pipeline** | ✅ Done | FFmpeg, 4 encode presets, checkpoint/resume |
 | **CLI** | ✅ Done | render, zoom, encode, info, palettes, resolutions, zoom-template |
 | **Configuration** | ✅ Done | Pydantic models, 7 resolution presets |
-| **Perturbation Theory** | 🔲 Planned | Deep zoom (1e50+) via reference orbit |
+| **Perturbation Theory** | ✅ Done | Reference orbit, delta kernel, SA, glitch correction, auto-select |
 | **Live Preview** | 🔲 Planned | Interactive zoom preview window |
 | **Post-Processing** | 🔲 Planned | Motion blur, vignette, color grading |
 | **RunPod Integration** | 🔲 Future | Remote GPU rendering for 4K final output |
@@ -142,6 +142,28 @@
 - 2x SSAA (4 samples/pixel) is the sweet spot: visible improvement, ~2.3x cost on stills, ~3.4x on video
 - Available via `--ss 2` on both `render` and `zoom` CLI commands
 
+### AD-007: Perturbation Theory Implementation Strategy
+
+**Date:** 2026-03-08
+**Decision:** Implement perturbation theory as a separate engine module with automatic selection based on zoom level.
+**Rationale:**
+
+- Standard float64 iteration gives wrong results at deep zoom (validated: 63 iterations off at just 50,000x zoom)
+- Perturbation theory computes one reference orbit at arbitrary precision (mpmath, CPU), then all pixels as float64 deltas (GPU)
+- Delta formula: `d_{n+1} = 2*Z_n*d_n + d_n^2 + dc` where dc = pixel offset from reference
+- Auto-selection threshold: zoom >= 1e13 uses PT, below uses standard -- seamless to the user
+- Series approximation (3rd-order Taylor) skips early iterations at deep zoom (enabled at zoom >= 1e8)
+- Glitch detection flags pixels where `|d_n|^2 > tolerance * |Z_n|^2`, then re-renders with a new reference orbit
+- Up to 3 glitch correction passes with automatic reference point selection
+- Rebasing: when reference orbit escapes before a pixel, falls back to standard iteration from the full value
+
+**Trade-offs:**
+
+- Reference orbit computation adds overhead (~40-160ms depending on max_iter and precision)
+- Series approximation only helps at deep zoom where dc is tiny; disabled at moderate zoom to avoid cubic approximation error
+- Glitch correction re-renders the full frame per pass (could optimize to render only glitched pixels)
+- Zoom path keyframe coordinates still stored as JSON floats (~15 digit limit), constraining zoom video depth to ~1e12
+
 ---
 
 ## Performance Notes
@@ -206,6 +228,26 @@
 - 1-min 720p video: ~2.6 min render
 - 1-min 1080p video: ~5-6 min render (estimated)
 - 1-min 4K video: ~20-25 min render (estimated, better on RunPod)
+
+### PERF-004: Perturbation Theory Render Times (RTX 3070, Phase 3)
+
+**Date:** 2026-03-08
+**Hardware:** RTX 3070, 8 GB VRAM, compute 8.6
+
+| Resolution | Zoom | Max Iter | Engine | SSAA | Time |
+|-----------|------|----------|--------|------|------|
+| 1080p | 5e5 | 2500 | Standard | 1x | 0.48s |
+| 1080p | 1e8 | 5000 | PT | 1x | 0.42s |
+| 1080p | 1e8 | 5000 | PT | 2x | 1.68s |
+| 1080p | 1x | 500 | Standard | 1x | 0.21s |
+| 640x360 | 1e14 | 8000 | PT | 1x | 1.01s |
+
+**Observations:**
+
+- PT at 1e8 is actually *faster* than standard at 5e5 (0.42s vs 0.48s) -- series approximation skips early iterations
+- Reference orbit overhead is small (~40ms for 5000 iters at 25-digit precision, ~160ms for 10000 iters at 60 digits)
+- At 1e14 zoom, higher per-pixel cost but still under 1s at small resolution
+- Validated: float64 gives wrong escape iteration at 50,000x zoom (2717 vs correct 2780 = 63 iterations off)
 
 ---
 

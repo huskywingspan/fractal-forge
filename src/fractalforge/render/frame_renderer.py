@@ -1,4 +1,10 @@
-"""Single frame renderer -- orchestrates kernel -> coloring -> image output."""
+"""Single frame renderer -- orchestrates kernel -> coloring -> image output.
+
+Auto-selects between standard double-precision and perturbation theory
+based on zoom level:
+  zoom < 1e13:  standard float64 (mandelbrot.py)
+  zoom >= 1e13: perturbation theory (perturbation.py)
+"""
 
 from pathlib import Path
 
@@ -8,10 +14,18 @@ from fractalforge.engine.coloring import smooth_to_image
 from fractalforge.engine.mandelbrot import render_frame
 from fractalforge.artist.palette import get_palette
 
+# Zoom threshold for switching to perturbation theory
+_DEEP_ZOOM_THRESHOLD = 1e13
+
+
+def _needs_perturbation(zoom: float) -> bool:
+    """Return True if zoom level requires perturbation theory."""
+    return zoom >= _DEEP_ZOOM_THRESHOLD
+
 
 def render_single(
-    center_re: float = -0.75,
-    center_im: float = 0.0,
+    center_re: float | str = -0.75,
+    center_im: float | str = 0.0,
     zoom: float = 1.0,
     width: int = 1920,
     height: int = 1080,
@@ -23,9 +37,12 @@ def render_single(
 ) -> Image.Image:
     """Render a single Mandelbrot frame as a PIL Image.
 
+    Automatically selects perturbation theory for deep zooms (>= 1e13).
+    Coordinates can be passed as strings to preserve precision at deep zoom.
+
     Args:
-        center_re: Real part of center coordinate.
-        center_im: Imaginary part of center coordinate.
+        center_re: Real part of center coordinate (float or string).
+        center_im: Imaginary part of center coordinate (float or string).
         zoom: Zoom level.
         width: Frame width in pixels.
         height: Frame height in pixels.
@@ -47,9 +64,25 @@ def render_single(
     render_w = width * ss
     render_h = height * ss
 
-    smooth_data = render_frame(
-        center_re, center_im, zoom, render_w, render_h, max_iter, use_gpu=use_gpu
-    )
+    if _needs_perturbation(zoom):
+        from fractalforge.engine.perturbation import render_frame_perturbation
+
+        # Pass coordinates as strings to preserve precision
+        smooth_data = render_frame_perturbation(
+            center_re=str(center_re),
+            center_im=str(center_im),
+            zoom=zoom,
+            width=render_w,
+            height=render_h,
+            max_iter=max_iter,
+            use_gpu=use_gpu,
+        )
+    else:
+        smooth_data = render_frame(
+            float(center_re), float(center_im), zoom,
+            render_w, render_h, max_iter, use_gpu=use_gpu,
+        )
+
     img = smooth_to_image(smooth_data, palette, interior_color)
 
     # Downsample if supersampled (box filter = proper area average)
@@ -61,8 +94,8 @@ def render_single(
 
 def render_and_save(
     output_path: Path,
-    center_re: float = -0.75,
-    center_im: float = 0.0,
+    center_re: float | str = -0.75,
+    center_im: float | str = 0.0,
     zoom: float = 1.0,
     width: int = 1920,
     height: int = 1080,
@@ -76,6 +109,8 @@ def render_and_save(
 
     Args:
         output_path: Path to save the image file.
+        center_re: Real part of center (float or string for deep zoom).
+        center_im: Imaginary part of center (float or string for deep zoom).
         Other args: See render_single().
 
     Returns:

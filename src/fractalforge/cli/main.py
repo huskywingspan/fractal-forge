@@ -30,8 +30,8 @@ def cli():
 
 
 @cli.command()
-@click.option("--center-re", "-x", default=-0.75, type=float, help="Real part of center.")
-@click.option("--center-im", "-y", default=0.0, type=float, help="Imaginary part of center.")
+@click.option("--center-re", "-x", default="-0.75", type=str, help="Real part of center (string for deep zoom precision).")
+@click.option("--center-im", "-y", default="0.0", type=str, help="Imaginary part of center (string for deep zoom precision).")
 @click.option("--zoom", "-z", default=1.0, type=float, help="Zoom level.")
 @click.option("--width", "-w", default=None, type=int, help="Frame width (overrides preset).")
 @click.option("--height", "-h", default=None, type=int, help="Frame height (overrides preset).")
@@ -50,8 +50,8 @@ def cli():
     "--output", "-o", default="output/frame.png", type=click.Path(), help="Output file path."
 )
 def render(
-    center_re: float,
-    center_im: float,
+    center_re: str,
+    center_im: str,
     zoom: float,
     width: int | None,
     height: int | None,
@@ -62,14 +62,25 @@ def render(
     ss: int,
     output: str,
 ):
-    """Render a single Mandelbrot frame to PNG."""
+    """Render a single Mandelbrot frame to PNG.
+
+    For deep zooms (>= 1e13), pass coordinates as full-precision strings:
+      fractalforge render -x "-0.7436438870371587" -y "0.1318259043091895" -z 1e15
+    The engine automatically selects perturbation theory when needed.
+    """
     from fractalforge.render.frame_renderer import render_and_save
     from fractalforge.engine.mandelbrot import CUDA_AVAILABLE
 
+    # Preserve string coordinates for deep zoom; also parse as float for config display
+    center_re_str = center_re
+    center_im_str = center_im
+    center_re_float = float(center_re)
+    center_im_float = float(center_im)
+
     # Resolve resolution: preset -> explicit w/h -> default
     config = RenderConfig(
-        center_re=center_re,
-        center_im=center_im,
+        center_re=center_re_float,
+        center_im=center_im_float,
         zoom=zoom,
         max_iter=max_iter,
         palette=palette,
@@ -85,9 +96,11 @@ def render(
 
     use_gpu = not cpu and CUDA_AVAILABLE
     backend = "GPU (CUDA)" if use_gpu else "CPU"
+    deep_zoom = config.zoom >= 1e13
+    engine = "perturbation theory" if deep_zoom else "standard float64"
 
     console.print(f"[bold cyan]FractalForge[/] v{__version__}")
-    console.print(f"  Center:    ({config.center_re}, {config.center_im})")
+    console.print(f"  Center:    ({center_re_str}, {center_im_str})")
     console.print(f"  Zoom:      {config.zoom:.2e}")
     console.print(f"  Size:      {config.width}x{config.height}")
     if preset:
@@ -97,14 +110,16 @@ def render(
     if ss > 1:
         console.print(f"  SSAA:      {ss}x ({ss*ss} samples/pixel)")
     console.print(f"  Backend:   {backend}")
+    console.print(f"  Engine:    {engine}")
     console.print(f"  Output:    {output}")
     console.print()
 
     start = time.perf_counter()
+    # Pass string coordinates for deep zoom precision preservation
     output_path = render_and_save(
         output_path=Path(output),
-        center_re=config.center_re,
-        center_im=config.center_im,
+        center_re=center_re_str if deep_zoom else config.center_re,
+        center_im=center_im_str if deep_zoom else config.center_im,
         zoom=config.zoom,
         width=config.width,
         height=config.height,

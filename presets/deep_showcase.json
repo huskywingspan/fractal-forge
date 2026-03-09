@@ -1,0 +1,44 @@
+{
+  "name": "deep_showcase",
+  "fps": 60,
+  "width": 1920,
+  "height": 1080,
+  "keyframes": [
+    {
+      "frame": 0,
+      "center_re": -0.75,
+      "center_im": 0.0,
+      "zoom": 1.0,
+      "max_iter": 500,
+      "palette": "nebula",
+      "rotation": 0.0
+    },
+    {
+      "frame": 400,
+      "center_re": -0.743643887037,
+      "center_im": 0.131825904205,
+      "zoom": 500.0,
+      "max_iter": 1000,
+      "palette": "nebula",
+      "rotation": 0.0
+    },
+    {
+      "frame": 900,
+      "center_re": -0.7436438870371587,
+      "center_im": 0.1318259042053119,
+      "zoom": 500000.0,
+      "max_iter": 2500,
+      "palette": "electric",
+      "rotation": 0.0
+    },
+    {
+      "frame": 1799,
+      "center_re": -0.7436438870371587,
+      "center_im": 0.1318259042053119,
+      "zoom": 10000000000.0,
+      "max_iter": 5000,
+      "palette": "electric",
+      "rotation": 0.0
+    }
+  ]
+}
