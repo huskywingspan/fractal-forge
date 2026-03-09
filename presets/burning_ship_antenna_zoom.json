@@ -1,0 +1,35 @@
+{
+  "name": "burning_ship_antenna_zoom",
+  "fps": 60,
+  "width": 1920,
+  "height": 1080,
+  "keyframes": [
+    {
+      "frame": 0,
+      "center_re": -1.755,
+      "center_im": 0.02,
+      "zoom": 5.0,
+      "max_iter": 800,
+      "palette": "electric",
+      "fractal_type": "burning_ship"
+    },
+    {
+      "frame": 1800,
+      "center_re": -1.7578,
+      "center_im": 0.0185,
+      "zoom": 5000.0,
+      "max_iter": 3000,
+      "palette": "ocean",
+      "fractal_type": "burning_ship"
+    },
+    {
+      "frame": 3600,
+      "center_re": -1.7578,
+      "center_im": 0.0185,
+      "zoom": 500000.0,
+      "max_iter": 5000,
+      "palette": "nebula",
+      "fractal_type": "burning_ship"
+    }
+  ]
+}

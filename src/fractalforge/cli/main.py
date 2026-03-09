@@ -55,6 +55,13 @@ def cli():
 @click.option("--saturation", default=1.0, type=float, help="Saturation multiplier (1.0=unchanged).")
 @click.option("--brightness", default=1.0, type=float, help="Brightness multiplier (1.0=unchanged).")
 @click.option(
+    "--fractal", "-f", default="mandelbrot",
+    type=click.Choice(["mandelbrot", "julia", "burning_ship"], case_sensitive=False),
+    help="Fractal type.",
+)
+@click.option("--julia-re", default=None, type=float, help="Julia c parameter (real part).")
+@click.option("--julia-im", default=None, type=float, help="Julia c parameter (imaginary part).")
+@click.option(
     "--output", "-o", default="output/frame.png", type=click.Path(), help="Output file path."
 )
 def render(
@@ -73,6 +80,9 @@ def render(
     contrast: float,
     saturation: float,
     brightness: float,
+    fractal: str,
+    julia_re: float | None,
+    julia_im: float | None,
     output: str,
 ):
     """Render a single Mandelbrot frame to PNG.
@@ -109,10 +119,16 @@ def render(
 
     use_gpu = not cpu and CUDA_AVAILABLE
     backend = "GPU (CUDA)" if use_gpu else "CPU"
-    deep_zoom = config.zoom >= 1e13
+    deep_zoom = config.zoom >= 1e13 and fractal == "mandelbrot"
     engine = "perturbation theory" if deep_zoom else "standard float64"
 
     console.print(f"[bold cyan]FractalForge[/] v{__version__}")
+    if fractal != "mandelbrot":
+        console.print(f"  Fractal:   {fractal}")
+    if fractal == "julia":
+        jre = julia_re if julia_re is not None else -0.7269
+        jim = julia_im if julia_im is not None else 0.1889
+        console.print(f"  Julia c:   ({jre}, {jim})")
     console.print(f"  Center:    ({center_re_str}, {center_im_str})")
     console.print(f"  Zoom:      {config.zoom:.2e}")
     console.print(f"  Size:      {config.width}x{config.height}")
@@ -151,6 +167,9 @@ def render(
         contrast=contrast,
         saturation=saturation,
         brightness=brightness,
+        fractal_type=fractal,
+        julia_re=julia_re,
+        julia_im=julia_im,
     )
     elapsed = time.perf_counter() - start
 
@@ -623,6 +642,56 @@ def short(path: str, start_frame: int | None, duration: int, output: str | None,
         output_path=Path(output),
         fps=zoom_path.fps,
         preset=encode_preset,
+        overwrite=True,
+    )
+
+    file_size = video_path.stat().st_size
+    size_str = f"{file_size / 1_048_576:.1f} MB" if file_size >= 1_048_576 else f"{file_size / 1024:.0f} KB"
+    console.print(f"\n[green]Done:[/] {video_path} ({size_str})")
+
+
+@cli.command(name="compile")
+@click.argument("spec_path", type=click.Path(exists=True))
+@click.option("--output", "-o", default=None, type=click.Path(), help="Output video file.")
+def compile_cmd(spec_path: str, output: str | None):
+    """Compile multiple zoom clips into a single video with crossfade transitions.
+
+    SPEC_PATH is a compilation spec JSON file defining clips, timing, and transitions.
+    """
+    from fractalforge.publish.compilation import CompilationSpec, assemble_compilation
+    from fractalforge.render.video import encode_video, check_ffmpeg
+
+    spec = CompilationSpec.load(Path(spec_path))
+
+    console.print(f"[bold cyan]FractalForge[/] v{__version__} -- Compile")
+    console.print(f"  Spec:        {spec_path}")
+    console.print(f"  Name:        {spec.name}")
+    console.print(f"  Clips:       {len(spec.clips)}")
+    console.print(f"  Transition:  {spec.transition_frames} frames ({spec.transition_frames / spec.fps:.1f}s crossfade)")
+    console.print(f"  Encode:      {spec.encode_preset}")
+    console.print()
+
+    # Assemble frames
+    assembly_dir = Path(f"output/{spec.name}_assembly")
+    console.print("[bold]Assembling frames...[/]")
+    assemble_compilation(spec, assembly_dir)
+
+    frame_count = len(list(assembly_dir.glob("frame_*.png")))
+    duration = frame_count / spec.fps
+    console.print(f"  Assembled {frame_count} frames ({duration:.1f}s)")
+
+    # Encode
+    if not check_ffmpeg():
+        console.print("[red]Error:[/] FFmpeg not found.")
+        raise SystemExit(1)
+
+    video_output = Path(output) if output else Path(f"output/{spec.name}.mp4")
+    console.print(f"[bold]Encoding ({spec.encode_preset})...[/]")
+    video_path = encode_video(
+        frames_dir=assembly_dir,
+        output_path=video_output,
+        fps=spec.fps,
+        preset=spec.encode_preset,
         overwrite=True,
     )
 

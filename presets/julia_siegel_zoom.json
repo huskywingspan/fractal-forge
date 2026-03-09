@@ -1,0 +1,41 @@
+{
+  "name": "julia_siegel_zoom",
+  "fps": 60,
+  "width": 1920,
+  "height": 1080,
+  "keyframes": [
+    {
+      "frame": 0,
+      "center_re": 0.0,
+      "center_im": 0.0,
+      "zoom": 1.0,
+      "max_iter": 500,
+      "palette": "ocean",
+      "fractal_type": "julia",
+      "julia_re": 0.285,
+      "julia_im": 0.01
+    },
+    {
+      "frame": 1800,
+      "center_re": -0.1,
+      "center_im": 0.65,
+      "zoom": 10000.0,
+      "max_iter": 3000,
+      "palette": "fire",
+      "fractal_type": "julia",
+      "julia_re": 0.285,
+      "julia_im": 0.01
+    },
+    {
+      "frame": 3600,
+      "center_re": -0.1,
+      "center_im": 0.65,
+      "zoom": 500000.0,
+      "max_iter": 5000,
+      "palette": "fire",
+      "fractal_type": "julia",
+      "julia_re": 0.285,
+      "julia_im": 0.01
+    }
+  ]
+}

@@ -80,11 +80,35 @@ def render_sequence(
         palette = get_palette(params["palette"])
 
         # Render at supersampled resolution
-        # Auto-select engine: perturbation theory for deep zoom
         frame_zoom = params["zoom"]
-        if frame_zoom >= _DEEP_ZOOM_THRESHOLD:
-            from fractalforge.engine.perturbation import render_frame_perturbation
+        ftype = params.get("fractal_type", "mandelbrot")
 
+        if ftype == "julia":
+            from fractalforge.engine.julia import render_frame_julia
+            smooth_data = render_frame_julia(
+                c_re=params.get("julia_re") or -0.7269,
+                c_im=params.get("julia_im") or 0.1889,
+                center_re=params["center_re"],
+                center_im=params["center_im"],
+                zoom=frame_zoom,
+                width=render_w,
+                height=render_h,
+                max_iter=params["max_iter"],
+                use_gpu=use_gpu,
+            )
+        elif ftype == "burning_ship":
+            from fractalforge.engine.burning_ship import render_frame_burning_ship
+            smooth_data = render_frame_burning_ship(
+                center_re=params["center_re"],
+                center_im=params["center_im"],
+                zoom=frame_zoom,
+                width=render_w,
+                height=render_h,
+                max_iter=params["max_iter"],
+                use_gpu=use_gpu,
+            )
+        elif frame_zoom >= _DEEP_ZOOM_THRESHOLD:
+            from fractalforge.engine.perturbation import render_frame_perturbation
             smooth_data = render_frame_perturbation(
                 center_re=str(params["center_re"]),
                 center_im=str(params["center_im"]),

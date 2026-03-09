@@ -1,0 +1,35 @@
+{
+  "name": "burning_ship_armada_zoom",
+  "fps": 60,
+  "width": 1920,
+  "height": 1080,
+  "keyframes": [
+    {
+      "frame": 0,
+      "center_re": -1.8,
+      "center_im": -0.05,
+      "zoom": 2.0,
+      "max_iter": 600,
+      "palette": "nebula",
+      "fractal_type": "burning_ship"
+    },
+    {
+      "frame": 1800,
+      "center_re": -1.862,
+      "center_im": -0.003,
+      "zoom": 500.0,
+      "max_iter": 2500,
+      "palette": "fire",
+      "fractal_type": "burning_ship"
+    },
+    {
+      "frame": 3600,
+      "center_re": -1.862,
+      "center_im": -0.003,
+      "zoom": 100000.0,
+      "max_iter": 4000,
+      "palette": "ocean",
+      "fractal_type": "burning_ship"
+    }
+  ]
+}

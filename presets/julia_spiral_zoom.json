@@ -1,0 +1,41 @@
+{
+  "name": "julia_spiral_zoom",
+  "fps": 60,
+  "width": 1920,
+  "height": 1080,
+  "keyframes": [
+    {
+      "frame": 0,
+      "center_re": 0.0,
+      "center_im": 0.0,
+      "zoom": 1.0,
+      "max_iter": 500,
+      "palette": "nebula",
+      "fractal_type": "julia",
+      "julia_re": -0.8,
+      "julia_im": 0.156
+    },
+    {
+      "frame": 1800,
+      "center_re": 0.35,
+      "center_im": 0.35,
+      "zoom": 8000.0,
+      "max_iter": 3000,
+      "palette": "ocean",
+      "fractal_type": "julia",
+      "julia_re": -0.8,
+      "julia_im": 0.156
+    },
+    {
+      "frame": 3600,
+      "center_re": 0.35,
+      "center_im": 0.35,
+      "zoom": 1000000.0,
+      "max_iter": 5000,
+      "palette": "ocean",
+      "fractal_type": "julia",
+      "julia_re": -0.8,
+      "julia_im": 0.156
+    }
+  ]
+}

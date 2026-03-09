@@ -39,6 +39,9 @@ def render_single(
     contrast: float = 1.0,
     saturation: float = 1.0,
     brightness: float = 1.0,
+    fractal_type: str = "mandelbrot",
+    julia_re: float | None = None,
+    julia_im: float | None = None,
 ) -> Image.Image:
     """Render a single Mandelbrot frame as a PIL Image.
 
@@ -74,10 +77,32 @@ def render_single(
     render_w = width * ss
     render_h = height * ss
 
-    if _needs_perturbation(zoom):
+    if fractal_type == "julia":
+        from fractalforge.engine.julia import render_frame_julia
+        smooth_data = render_frame_julia(
+            c_re=julia_re or -0.7269,
+            c_im=julia_im or 0.1889,
+            center_re=float(center_re),
+            center_im=float(center_im),
+            zoom=zoom,
+            width=render_w,
+            height=render_h,
+            max_iter=max_iter,
+            use_gpu=use_gpu,
+        )
+    elif fractal_type == "burning_ship":
+        from fractalforge.engine.burning_ship import render_frame_burning_ship
+        smooth_data = render_frame_burning_ship(
+            center_re=float(center_re),
+            center_im=float(center_im),
+            zoom=zoom,
+            width=render_w,
+            height=render_h,
+            max_iter=max_iter,
+            use_gpu=use_gpu,
+        )
+    elif _needs_perturbation(zoom):
         from fractalforge.engine.perturbation import render_frame_perturbation
-
-        # Pass coordinates as strings to preserve precision
         smooth_data = render_frame_perturbation(
             center_re=str(center_re),
             center_im=str(center_im),
@@ -124,6 +149,9 @@ def render_and_save(
     contrast: float = 1.0,
     saturation: float = 1.0,
     brightness: float = 1.0,
+    fractal_type: str = "mandelbrot",
+    julia_re: float | None = None,
+    julia_im: float | None = None,
 ) -> Path:
     """Render a single frame and save to disk.
 
@@ -155,6 +183,9 @@ def render_and_save(
         contrast=contrast,
         saturation=saturation,
         brightness=brightness,
+        fractal_type=fractal_type,
+        julia_re=julia_re,
+        julia_im=julia_im,
     )
     img.save(output_path)
     return output_path

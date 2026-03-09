@@ -4,7 +4,7 @@
 >
 > **For Copilot Agents:** Reference this document when working on FractalForge to avoid repeating past mistakes and understand why things are built the way they are.
 >
-> **Version:** 3.0 (March 8, 2026) -- Phase 3 complete. Perturbation theory engine with series approximation, glitch correction, and auto-precision selection.
+> **Version:** 4.0 (March 9, 2026) -- alpha1.1.0: Julia sets, Burning Ship fractal, compilation pipeline with crossfade transitions.
 
 ---
 
@@ -17,11 +17,15 @@
 | **Zoom Path Planner** | ✅ Done | Keyframes, zoom-weighted position interp |
 | **Frame Renderer** | ✅ Done | Single-frame PNG, supersampling support |
 | **Video Pipeline** | ✅ Done | FFmpeg, 4 encode presets, checkpoint/resume |
-| **CLI** | ✅ Done | render, zoom, encode, info, palettes, resolutions, zoom-template |
+| **CLI** | ✅ Done | render, zoom, encode, info, palettes, resolutions, zoom-template, title, thumbnail, short, compile |
 | **Configuration** | ✅ Done | Pydantic models, 7 resolution presets |
 | **Perturbation Theory** | ✅ Done | Reference orbit, delta kernel, SA, glitch correction, auto-select |
+| **Julia Set Engine** | ✅ Done | CUDA + CPU kernels, c-parameter interpolation in zoom paths |
+| **Burning Ship Engine** | ✅ Done | CUDA + CPU kernels, y-axis flip for correct orientation |
+| **Compilation Pipeline** | ✅ Done | Multi-clip assembly with crossfade transitions |
+| **Post-Processing** | ✅ Done | Vignette, contrast/saturation/brightness, histogram EQ, 8x SSAA |
+| **YouTube Pipeline** | ✅ Done | Title cards, thumbnails, Shorts, YouTube encode preset |
 | **Live Preview** | 🔲 Planned | Interactive zoom preview window |
-| **Post-Processing** | 🔲 Planned | Motion blur, vignette, color grading |
 | **RunPod Integration** | 🔲 Future | Remote GPU rendering for 4K final output |
 
 ### Rendering Targets
@@ -164,6 +168,30 @@
 - Glitch correction re-renders the full frame per pass (could optimize to render only glitched pixels)
 - Zoom path keyframe coordinates still stored as JSON floats (~15 digit limit), constraining zoom video depth to ~1e12
 
+### AD-008: Fractal Type Routing Architecture
+
+**Date:** 2026-03-09
+**Decision:** All fractal types produce the same `smooth_data` float64 array, with dispatch by `fractal_type` parameter.
+**Rationale:**
+
+- Adding new fractal types (Julia, Burning Ship, future: Tricorn, Phoenix, etc.) should not require changes to the coloring, SSAA, post-processing, encoding, or YouTube pipeline
+- Each engine module (`julia.py`, `burning_ship.py`) follows the same API pattern: `render_frame_*(center_re, center_im, zoom, width, height, max_iter, use_gpu) -> np.ndarray`
+- The `Keyframe` dataclass carries `fractal_type`, `julia_re`, `julia_im` fields with backward-compatible defaults
+- For Julia sets, the c-parameter is interpolated linearly between keyframes, enabling "Julia morphing" animations
+- Routing happens in `frame_renderer.py` (single frames) and `sequence.py` (zoom videos)
+
+### AD-009: Compilation Pipeline with Crossfade Transitions
+
+**Date:** 2026-03-09
+**Decision:** Multi-clip compilation assembler that copies pre-rendered frame ranges and inserts crossfade transitions.
+**Rationale:**
+
+- YouTube compilations ("Best Of", "Top 10") are a key content format for the Infinite Descent channel
+- The pipeline takes a JSON spec with clip references, start times, durations, and transition config
+- Crossfade: linear alpha blend `out = A * (1-t) + B * t` for smooth visual transitions
+- Frames are renumbered sequentially, then encoded via the standard FFmpeg pipeline
+- Extensible: future transition types (fade_black, wipe, zoom_match) can be added as new blend functions
+
 ---
 
 ## Performance Notes
@@ -283,3 +311,13 @@ At deep zoom levels, even small errors in the target coordinate matter enormousl
 
 **Date:** 2026-03-08
 When implementing supersampling, the correct order is: render iterations at high res -> color at high res -> downsample the RGB image. Averaging iteration counts before coloring gives wrong results because the palette wraps cyclically -- two iteration counts on opposite sides of the palette would average to a completely wrong middle color.
+
+### LL-003: Chunked Palette Coloring Prevents OOM at High SSAA
+
+**Date:** 2026-03-09
+At 8x SSAA on 1080p (15360x8640 = 132M pixels), the palette coloring step tried to allocate multiple float64 arrays simultaneously (ext_vals, t, idx0, idx1, frac, color0, color1, interpolated), totaling ~13 GB for 132M exterior pixels. Fix: process the palette mapping in row chunks of ~8M pixels, keeping peak memory under 1 GB regardless of resolution or SSAA level.
+
+### LL-004: Julia Set Zoom Targets Need Boundary Awareness
+
+**Date:** 2026-03-09
+Unlike Mandelbrot, where the main cardioid boundary is well-known, Julia set boundaries depend on the c-parameter and are not predictable from coordinates alone. Arbitrary deep zoom coordinates in Julia sets often land in regions with uniform iteration counts, producing boring wallpapers (3-8 unique colors). Moderate zooms (4-10x) near visually obvious boundary regions work much better for wallpapers. For zoom videos, start wide (zoom=1) and let the camera find the boundary naturally.

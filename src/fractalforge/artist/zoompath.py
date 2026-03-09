@@ -29,6 +29,9 @@ class Keyframe:
     max_iter: int = 1000
     palette: str = "ocean"
     rotation: float = 0.0  # Degrees, future use
+    fractal_type: str = "mandelbrot"  # mandelbrot, julia, burning_ship
+    julia_re: float | None = None
+    julia_im: float | None = None
 
 
 @dataclass
@@ -79,6 +82,9 @@ class ZoomPath:
                 "zoom": kf.zoom,
                 "max_iter": kf.max_iter,
                 "palette": kf.palette,
+                "fractal_type": kf.fractal_type,
+                "julia_re": kf.julia_re,
+                "julia_im": kf.julia_im,
             }
 
         if frame >= self.keyframes[-1].frame:
@@ -89,6 +95,9 @@ class ZoomPath:
                 "zoom": kf.zoom,
                 "max_iter": kf.max_iter,
                 "palette": kf.palette,
+                "fractal_type": kf.fractal_type,
+                "julia_re": kf.julia_re,
+                "julia_im": kf.julia_im,
             }
 
         # Find surrounding keyframes
@@ -122,12 +131,24 @@ class ZoomPath:
                 # Use kf0's palette until we pass the midpoint
                 palette = kf0.palette if t < 0.5 else kf1.palette
 
+                # Fractal type and Julia params (lerp Julia c if both keyframes have it)
+                fractal_type = kf0.fractal_type
+                julia_re = kf0.julia_re
+                julia_im = kf0.julia_im
+                if (kf0.julia_re is not None and kf1.julia_re is not None
+                        and kf0.julia_im is not None and kf1.julia_im is not None):
+                    julia_re = kf0.julia_re + t * (kf1.julia_re - kf0.julia_re)
+                    julia_im = kf0.julia_im + t * (kf1.julia_im - kf0.julia_im)
+
                 return {
                     "center_re": center_re,
                     "center_im": center_im,
                     "zoom": zoom,
                     "max_iter": max_iter,
                     "palette": palette,
+                    "fractal_type": fractal_type,
+                    "julia_re": julia_re,
+                    "julia_im": julia_im,
                 }
 
         # Should not reach here
@@ -142,13 +163,21 @@ class ZoomPath:
             "height": self.height,
             "keyframes": [
                 {
-                    "frame": kf.frame,
-                    "center_re": kf.center_re,
-                    "center_im": kf.center_im,
-                    "zoom": kf.zoom,
-                    "max_iter": kf.max_iter,
-                    "palette": kf.palette,
-                    "rotation": kf.rotation,
+                    k: v for k, v in {
+                        "frame": kf.frame,
+                        "center_re": kf.center_re,
+                        "center_im": kf.center_im,
+                        "zoom": kf.zoom,
+                        "max_iter": kf.max_iter,
+                        "palette": kf.palette,
+                        "rotation": kf.rotation,
+                        "fractal_type": kf.fractal_type,
+                        "julia_re": kf.julia_re,
+                        "julia_im": kf.julia_im,
+                    }.items()
+                    if v is not None and v != "mandelbrot" or k in (
+                        "frame", "center_re", "center_im", "zoom", "max_iter", "palette",
+                    )
                 }
                 for kf in self.keyframes
             ],

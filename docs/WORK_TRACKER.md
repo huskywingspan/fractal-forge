@@ -66,6 +66,32 @@
 | P4-11 | Brand asset config (colors, fonts, watermark) | ✅ Done | BRAND dict, font fallback chain, scale_size util |
 | P4-12 | YouTube-optimized encode preset | ✅ Done | CRF 16, H.264 High Profile, faststart, B-frames |
 
+## Sprint alpha1.1.0: New Fractal Types & Compilation Pipeline
+
+*Goal: Add Julia set and Burning Ship fractals, plus automated short compilation pipeline.*
+
+| ID | Item | Status | Notes |
+|----|------|--------|-------|
+| S1-01 | Julia CUDA kernel | ✅ Done | Same structure as Mandelbrot, c fixed, z_0 = pixel |
+| S1-02 | Julia CPU kernel | ✅ Done | Numba njit parallel fallback |
+| S1-03 | `render_frame_julia()` function | ✅ Done | `engine/julia.py` |
+| S1-04 | Route in `frame_renderer.py` | ✅ Done | `fractal_type` param dispatches to correct kernel |
+| S1-05 | CLI: `--fractal` flag | ✅ Done | On `render` command; zoom uses keyframe `fractal_type` |
+| S1-06 | Julia zoom path support | ✅ Done | `julia_re`, `julia_im` in Keyframe, c-param interpolation |
+| S2-01 | Burning Ship CUDA kernel | ✅ Done | abs(z_re), abs(z_im) before squaring, y-flip |
+| S2-02 | Burning Ship CPU kernel | ✅ Done | Numba njit parallel fallback |
+| S2-03 | `render_frame_burning_ship()` function | ✅ Done | `engine/burning_ship.py` |
+| S2-04 | Route through `--fractal burning_ship` | ✅ Done | Same pipeline as Julia routing |
+| S3-01 | `CompilationSpec` data model | ✅ Done | Pydantic model in `publish/compilation.py` |
+| S3-02 | Frame extraction / trim | ✅ Done | Copy frame ranges from rendered preset dirs |
+| S3-03 | Crossfade transition renderer | ✅ Done | Linear alpha blend between clip endpoints |
+| S3-04 | Compilation assembler | ✅ Done | Full assembly with transitions, renumbering |
+| S3-05 | `fractalforge compile` CLI command | ✅ Done | Takes spec JSON, assembles + encodes |
+| S4-01 | Julia zoom presets (5) | ✅ Done | dendrite, spiral, siegel, dragon, rabbit |
+| S4-02 | Julia wallpaper set (10) | ✅ Done | 5 c-params x 2 views (full + zoomed) |
+| S4-03 | Burning Ship zoom presets (3) | ✅ Done | full, antenna, armada |
+| S4-04 | Burning Ship wallpaper set (6) | ✅ Done | full, antenna, antenna_deep, armada, bow, smokestack |
+
 ## Phase 5: Production & Scaling
 
 *Goal: RunPod integration, 4K renders, production workflow.*
@@ -85,8 +111,8 @@
 
 | ID | Item | Priority | Notes |
 |----|------|----------|-------|
-| BL-01 | Julia set support | Medium | Parameterized by c value |
-| BL-02 | Burning Ship fractal | Low | Different iteration formula |
+| BL-01 | ~~Julia set support~~ | ✅ Done | Moved to Sprint alpha1.1.0 |
+| BL-02 | ~~Burning Ship fractal~~ | ✅ Done | Moved to Sprint alpha1.1.0 |
 | BL-03 | Interactive preview window (pygame/OpenGL) | Medium | Real-time zoom navigation |
 | BL-04 | Web viewer (WebGPU) | Low | Browser-based preview |
 | BL-05 | Fractal location finder / scout tool | Medium | Auto-discover interesting zoom targets |
