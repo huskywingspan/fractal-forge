@@ -27,6 +27,10 @@ def render_sequence(
     supersampling: int = 1,
     on_progress: callable = None,
     histogram: bool = False,
+    vignette: float = 0.0,
+    contrast: float = 1.0,
+    saturation: float = 1.0,
+    brightness: float = 1.0,
 ) -> list[Path]:
     """Render all frames in a zoom path to individual PNG files.
 
@@ -38,6 +42,10 @@ def render_sequence(
         supersampling: Supersampling factor (1=off, 2=4x SSAA, 3=9x).
         on_progress: Callback(frame_idx, total_frames, elapsed, fps) called after each frame.
         histogram: If True, apply histogram equalization for even color distribution.
+        vignette: Vignette strength (0.0=off).
+        contrast: Contrast multiplier (1.0=unchanged).
+        saturation: Saturation multiplier (1.0=unchanged).
+        brightness: Brightness multiplier (1.0=unchanged).
 
     Returns:
         List of output file paths in frame order.
@@ -102,6 +110,11 @@ def render_sequence(
         # Downsample if supersampled
         if ss > 1:
             img = img.resize((zoom_path.width, zoom_path.height), Image.LANCZOS)
+
+        # Post-processing (vignette, color grading)
+        if vignette > 0 or contrast != 1.0 or saturation != 1.0 or brightness != 1.0:
+            from fractalforge.engine.postprocess import postprocess
+            img = postprocess(img, vignette, contrast, saturation, brightness)
 
         img.save(frame_path, format="PNG")
         rendered_count += 1

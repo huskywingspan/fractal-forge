@@ -53,18 +53,18 @@
 
 | ID | Item | Status | Notes |
 |----|------|--------|-------|
-| P4-01 | Histogram equalization for iteration counts | 🔲 Todo | Biggest visual quality improvement |
+| P4-01 | Histogram equalization for iteration counts | ✅ Done | CDF-based remapping, --histogram CLI flag |
 | P4-02 | Distance estimation coloring | 🔲 Todo | |
 | P4-03 | Orbit trap coloring modes | 🔲 Todo | |
 | P4-04 | Motion blur between frames | 🔲 Todo | |
-| P4-05 | Vignette and color grading post-process | 🔲 Todo | Cinematic feel |
+| P4-05 | Vignette and color grading post-process | ✅ Done | --vignette, --contrast, --saturation, --brightness |
 | P4-06 | Anti-aliasing (supersampling) | ✅ Done | 2x SSAA via --ss flag, Lanczos downsample |
 | P4-07 | Palette editor / designer tool | 🔲 Todo | |
-| P4-08 | Title card overlay renderer (RGBA PNG) | 🔲 Todo | `fractalforge title` CLI, Montserrat/Rajdhani |
-| P4-09 | Thumbnail auto-sampler with text overlay | 🔲 Todo | `fractalforge thumbnail`, 1280x720, 5 candidates |
-| P4-10 | YouTube Shorts crop mode (9:16 vertical) | 🔲 Todo | `fractalforge short`, center-crop from 16:9 |
-| P4-11 | Brand asset config (colors, fonts, watermark) | 🔲 Todo | JSON brand config, Infinite Descent identity |
-| P4-12 | YouTube-optimized encode preset | 🔲 Todo | Proper bitrate/CRF for YouTube re-encoding |
+| P4-08 | Title card overlay renderer (RGBA PNG) | ✅ Done | `fractalforge title` CLI, gradient + brand fonts |
+| P4-09 | Thumbnail auto-sampler with text overlay | ✅ Done | `fractalforge thumbnail`, 1280x720, gradient+text |
+| P4-10 | YouTube Shorts crop mode (9:16 vertical) | ✅ Done | `fractalforge short`, center-crop + encode |
+| P4-11 | Brand asset config (colors, fonts, watermark) | ✅ Done | BRAND dict, font fallback chain, scale_size util |
+| P4-12 | YouTube-optimized encode preset | ✅ Done | CRF 16, H.264 High Profile, faststart, B-frames |
 
 ## Phase 5: Production & Scaling
 

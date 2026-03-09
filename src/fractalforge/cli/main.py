@@ -9,6 +9,7 @@ Usage:
     fractalforge encode [OPTIONS]    Encode frames to video (Phase 2)
     fractalforge title TITLE         Generate a title card overlay (Phase 4)
     fractalforge thumbnail PATH      Generate thumbnail candidates (Phase 4)
+    fractalforge short PATH          Generate a YouTube Short (Phase 4)
 """
 
 import time
@@ -49,6 +50,10 @@ def cli():
 @click.option("--cpu", is_flag=True, default=False, help="Force CPU rendering (no GPU).")
 @click.option("--ss", default=1, type=click.IntRange(1, 4), help="Supersampling (1=off, 2=4x AA, 3=9x).")
 @click.option("--histogram", is_flag=True, default=False, help="Apply histogram equalization for even color distribution.")
+@click.option("--vignette", default=0.0, type=click.FloatRange(0.0, 1.0), help="Vignette strength (0=off, 0.5=moderate, 1=strong).")
+@click.option("--contrast", default=1.0, type=float, help="Contrast multiplier (1.0=unchanged).")
+@click.option("--saturation", default=1.0, type=float, help="Saturation multiplier (1.0=unchanged).")
+@click.option("--brightness", default=1.0, type=float, help="Brightness multiplier (1.0=unchanged).")
 @click.option(
     "--output", "-o", default="output/frame.png", type=click.Path(), help="Output file path."
 )
@@ -64,6 +69,10 @@ def render(
     cpu: bool,
     ss: int,
     histogram: bool,
+    vignette: float,
+    contrast: float,
+    saturation: float,
+    brightness: float,
     output: str,
 ):
     """Render a single Mandelbrot frame to PNG.
@@ -115,6 +124,10 @@ def render(
         console.print(f"  SSAA:      {ss}x ({ss*ss} samples/pixel)")
     if histogram:
         console.print(f"  Histogram: enabled")
+    if vignette > 0:
+        console.print(f"  Vignette:  {vignette:.1f}")
+    if contrast != 1.0 or saturation != 1.0 or brightness != 1.0:
+        console.print(f"  Grade:     contrast={contrast:.2f} sat={saturation:.2f} bright={brightness:.2f}")
     console.print(f"  Backend:   {backend}")
     console.print(f"  Engine:    {engine}")
     console.print(f"  Output:    {output}")
@@ -134,6 +147,10 @@ def render(
         use_gpu=use_gpu,
         supersampling=ss,
         histogram=histogram,
+        vignette=vignette,
+        contrast=contrast,
+        saturation=saturation,
+        brightness=brightness,
     )
     elapsed = time.perf_counter() - start
 
@@ -222,12 +239,16 @@ def resolutions():
 )
 @click.option(
     "--encode-preset", "-e", default="quality",
-    type=click.Choice(["preview", "quality", "lossless", "prores"], case_sensitive=False),
+    type=click.Choice(["preview", "quality", "lossless", "prores", "youtube"], case_sensitive=False),
     help="Video encoding preset.",
 )
 @click.option("--cpu", is_flag=True, default=False, help="Force CPU rendering.")
 @click.option("--ss", default=1, type=click.IntRange(1, 4), help="Supersampling (1=off, 2=4x AA, 3=9x).")
 @click.option("--histogram", is_flag=True, default=False, help="Apply histogram equalization for even color distribution.")
+@click.option("--vignette", default=0.0, type=click.FloatRange(0.0, 1.0), help="Vignette strength (0=off, 0.5=moderate, 1=strong).")
+@click.option("--contrast", default=1.0, type=float, help="Contrast multiplier (1.0=unchanged).")
+@click.option("--saturation", default=1.0, type=float, help="Saturation multiplier (1.0=unchanged).")
+@click.option("--brightness", default=1.0, type=float, help="Brightness multiplier (1.0=unchanged).")
 @click.option("--frames-only", is_flag=True, default=False, help="Render frames only, skip encoding.")
 @click.option("--resume", is_flag=True, default=False, help="Resume an interrupted render (skip existing frames).")
 def zoom(
@@ -238,6 +259,10 @@ def zoom(
     cpu: bool,
     ss: int,
     histogram: bool,
+    vignette: float,
+    contrast: float,
+    saturation: float,
+    brightness: float,
     frames_only: bool,
     resume: bool,
 ):
@@ -278,6 +303,10 @@ def zoom(
         console.print(f"  SSAA:      {ss}x ({ss*ss} samples/pixel)")
     if histogram:
         console.print(f"  Histogram: enabled")
+    if vignette > 0:
+        console.print(f"  Vignette:  {vignette:.1f}")
+    if contrast != 1.0 or saturation != 1.0 or brightness != 1.0:
+        console.print(f"  Grade:     contrast={contrast:.2f} sat={saturation:.2f} bright={brightness:.2f}")
     console.print(f"  Backend:   {backend}")
     console.print(f"  Frames ->  {frames_path}")
     if not frames_only:
@@ -311,6 +340,10 @@ def zoom(
         supersampling=ss,
         on_progress=on_progress,
         histogram=histogram,
+        vignette=vignette,
+        contrast=contrast,
+        saturation=saturation,
+        brightness=brightness,
     )
 
     render_elapsed = time.perf_counter() - start
@@ -351,7 +384,7 @@ def zoom(
 @click.option("--fps", default=60, type=int, help="Frames per second.")
 @click.option(
     "--preset", "-e", default="quality",
-    type=click.Choice(["preview", "quality", "lossless", "prores"], case_sensitive=False),
+    type=click.Choice(["preview", "quality", "lossless", "prores", "youtube"], case_sensitive=False),
     help="Encoding preset.",
 )
 def encode(frames_dir: str, output: str, fps: int, preset: str):
@@ -514,6 +547,88 @@ def thumbnail(path: str, samples: int, output_dir: str | None, title: str | None
         file_size = p.stat().st_size
         size_str = f"{file_size / 1024:.0f} KB"
         console.print(f"  {p} ({size_str})")
+
+
+@cli.command()
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--start-frame", "-s", default=None, type=int, help="Start frame index (default: 40% of sequence).")
+@click.option("--duration", "-d", default=30, type=click.IntRange(5, 60), help="Duration in seconds (5-60, default 30).")
+@click.option("--output", "-o", default=None, type=click.Path(), help="Output video file path.")
+@click.option(
+    "--encode-preset", "-e", default="youtube",
+    type=click.Choice(["preview", "quality", "youtube"], case_sensitive=False),
+    help="Encoding preset.",
+)
+def short(path: str, start_frame: int | None, duration: int, output: str | None, encode_preset: str):
+    """Generate a YouTube Short from a zoom path render.
+
+    PATH is the zoom path JSON file. Crops landscape frames to 9:16 portrait,
+    selects a segment, and encodes to a Shorts-ready MP4.
+    """
+    from fractalforge.artist.zoompath import ZoomPath
+    from fractalforge.publish.shorts import generate_short_frames
+    from fractalforge.render.video import encode_video, check_ffmpeg
+
+    zoom_path = ZoomPath.load(Path(path))
+    frames_dir = Path(f"output/{zoom_path.name}_frames")
+
+    if not frames_dir.exists():
+        console.print(f"[red]Error:[/] Frames directory not found: {frames_dir}")
+        console.print("  Render the zoom path first with: fractalforge zoom " + path)
+        raise SystemExit(1)
+
+    # Calculate frame range
+    num_short_frames = duration * zoom_path.fps
+    if start_frame is None:
+        # Default: start at 40% of sequence for interesting content
+        start_frame = int(zoom_path.total_frames * 0.4)
+
+    end_frame = min(start_frame + num_short_frames, zoom_path.total_frames)
+    actual_duration = (end_frame - start_frame) / zoom_path.fps
+
+    if output is None:
+        output = f"output/{zoom_path.name}_short.mp4"
+
+    console.print(f"[bold cyan]FractalForge[/] v{__version__} -- YouTube Short")
+    console.print(f"  Source:    {path}")
+    console.print(f"  Frames:    {start_frame} -> {end_frame} ({end_frame - start_frame} frames)")
+    console.print(f"  Duration:  {actual_duration:.1f}s at {zoom_path.fps}fps")
+    console.print(f"  Output:    1080x1920 (9:16 portrait)")
+    console.print()
+
+    # Crop frames to portrait
+    short_frames_dir = Path(f"output/{zoom_path.name}_short_frames")
+    console.print("[bold]Cropping frames to 9:16...[/]")
+    short_paths = generate_short_frames(
+        frames_dir=frames_dir,
+        output_dir=short_frames_dir,
+        start_frame=start_frame,
+        end_frame=end_frame,
+    )
+
+    if not short_paths:
+        console.print("[red]Error:[/] No frames generated.")
+        raise SystemExit(1)
+
+    console.print(f"  Cropped {len(short_paths)} frames")
+
+    # Encode
+    if not check_ffmpeg():
+        console.print("[red]Error:[/] FFmpeg not found -- cannot encode.")
+        raise SystemExit(1)
+
+    console.print(f"[bold]Encoding ({encode_preset})...[/]")
+    video_path = encode_video(
+        frames_dir=short_frames_dir,
+        output_path=Path(output),
+        fps=zoom_path.fps,
+        preset=encode_preset,
+        overwrite=True,
+    )
+
+    file_size = video_path.stat().st_size
+    size_str = f"{file_size / 1_048_576:.1f} MB" if file_size >= 1_048_576 else f"{file_size / 1024:.0f} KB"
+    console.print(f"\n[green]Done:[/] {video_path} ({size_str})")
 
 
 if __name__ == "__main__":

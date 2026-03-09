@@ -45,6 +45,16 @@ ENCODE_PRESETS = {
         "pix_fmt": "yuv422p10le",
         "ext": ".mov",
     },
+    "youtube": {
+        "label": "YouTube upload (high quality, H.264 High Profile)",
+        "vcodec": "libx264",
+        "crf": "16",
+        "preset": "slow",
+        "pix_fmt": "yuv420p",
+        "profile:v": "high",
+        "extra": ["-bf", "2", "-g", "120", "-movflags", "+faststart"],
+        "ext": ".mp4",
+    },
 }
 
 
@@ -124,6 +134,8 @@ def encode_video(
         cmd.extend(["-preset", settings["preset"]])
     if "profile:v" in settings:
         cmd.extend(["-profile:v", settings["profile:v"]])
+    if "extra" in settings:
+        cmd.extend(settings["extra"])
 
     cmd.append(str(output_path))
 

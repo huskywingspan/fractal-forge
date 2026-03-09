@@ -35,6 +35,10 @@ def render_single(
     use_gpu: bool | None = None,
     supersampling: int = 1,
     histogram: bool = False,
+    vignette: float = 0.0,
+    contrast: float = 1.0,
+    saturation: float = 1.0,
+    brightness: float = 1.0,
 ) -> Image.Image:
     """Render a single Mandelbrot frame as a PIL Image.
 
@@ -55,6 +59,10 @@ def render_single(
             Renders at factor*width x factor*height then downsamples with
             a box filter, averaging colors to eliminate aliasing noise.
         histogram: If True, apply histogram equalization for even color distribution.
+        vignette: Vignette strength (0.0=off, 0.5=moderate, 1.0=strong edge darkening).
+        contrast: Contrast multiplier (1.0=unchanged).
+        saturation: Saturation multiplier (1.0=unchanged).
+        brightness: Brightness multiplier (1.0=unchanged).
 
     Returns:
         PIL Image (RGB) at the requested width x height.
@@ -91,6 +99,11 @@ def render_single(
     if ss > 1:
         img = img.resize((width, height), Image.LANCZOS)
 
+    # Post-processing (vignette, color grading)
+    if vignette > 0 or contrast != 1.0 or saturation != 1.0 or brightness != 1.0:
+        from fractalforge.engine.postprocess import postprocess
+        img = postprocess(img, vignette, contrast, saturation, brightness)
+
     return img
 
 
@@ -107,6 +120,10 @@ def render_and_save(
     use_gpu: bool | None = None,
     supersampling: int = 1,
     histogram: bool = False,
+    vignette: float = 0.0,
+    contrast: float = 1.0,
+    saturation: float = 1.0,
+    brightness: float = 1.0,
 ) -> Path:
     """Render a single frame and save to disk.
 
@@ -134,6 +151,10 @@ def render_and_save(
         use_gpu=use_gpu,
         supersampling=supersampling,
         histogram=histogram,
+        vignette=vignette,
+        contrast=contrast,
+        saturation=saturation,
+        brightness=brightness,
     )
     img.save(output_path)
     return output_path
