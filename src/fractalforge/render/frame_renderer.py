@@ -34,6 +34,7 @@ def render_single(
     interior_color: tuple[int, int, int] = (0, 0, 0),
     use_gpu: bool | None = None,
     supersampling: int = 1,
+    histogram: bool = False,
 ) -> Image.Image:
     """Render a single Mandelbrot frame as a PIL Image.
 
@@ -53,6 +54,7 @@ def render_single(
         supersampling: Supersampling factor (1=off, 2=4x SSAA, 3=9x).
             Renders at factor*width x factor*height then downsamples with
             a box filter, averaging colors to eliminate aliasing noise.
+        histogram: If True, apply histogram equalization for even color distribution.
 
     Returns:
         PIL Image (RGB) at the requested width x height.
@@ -83,7 +85,7 @@ def render_single(
             render_w, render_h, max_iter, use_gpu=use_gpu,
         )
 
-    img = smooth_to_image(smooth_data, palette, interior_color)
+    img = smooth_to_image(smooth_data, palette, interior_color, histogram=histogram)
 
     # Downsample if supersampled (box filter = proper area average)
     if ss > 1:
@@ -104,6 +106,7 @@ def render_and_save(
     interior_color: tuple[int, int, int] = (0, 0, 0),
     use_gpu: bool | None = None,
     supersampling: int = 1,
+    histogram: bool = False,
 ) -> Path:
     """Render a single frame and save to disk.
 
@@ -130,6 +133,7 @@ def render_and_save(
         interior_color=interior_color,
         use_gpu=use_gpu,
         supersampling=supersampling,
+        histogram=histogram,
     )
     img.save(output_path)
     return output_path

@@ -26,6 +26,7 @@ def render_sequence(
     skip_existing: bool = True,
     supersampling: int = 1,
     on_progress: callable = None,
+    histogram: bool = False,
 ) -> list[Path]:
     """Render all frames in a zoom path to individual PNG files.
 
@@ -36,6 +37,7 @@ def render_sequence(
         skip_existing: Skip frames that already exist on disk (checkpoint resume).
         supersampling: Supersampling factor (1=off, 2=4x SSAA, 3=9x).
         on_progress: Callback(frame_idx, total_frames, elapsed, fps) called after each frame.
+        histogram: If True, apply histogram equalization for even color distribution.
 
     Returns:
         List of output file paths in frame order.
@@ -95,7 +97,7 @@ def render_sequence(
                 use_gpu=use_gpu,
             )
 
-        img = smooth_to_image(smooth_data, palette)
+        img = smooth_to_image(smooth_data, palette, histogram=histogram)
 
         # Downsample if supersampled
         if ss > 1:

@@ -7,6 +7,8 @@ Usage:
     fractalforge resolutions         List resolution presets
     fractalforge zoom [OPTIONS]      Render a zoom video (Phase 2)
     fractalforge encode [OPTIONS]    Encode frames to video (Phase 2)
+    fractalforge title TITLE         Generate a title card overlay (Phase 4)
+    fractalforge thumbnail PATH      Generate thumbnail candidates (Phase 4)
 """
 
 import time
@@ -46,6 +48,7 @@ def cli():
 )
 @click.option("--cpu", is_flag=True, default=False, help="Force CPU rendering (no GPU).")
 @click.option("--ss", default=1, type=click.IntRange(1, 4), help="Supersampling (1=off, 2=4x AA, 3=9x).")
+@click.option("--histogram", is_flag=True, default=False, help="Apply histogram equalization for even color distribution.")
 @click.option(
     "--output", "-o", default="output/frame.png", type=click.Path(), help="Output file path."
 )
@@ -60,6 +63,7 @@ def render(
     preset: str | None,
     cpu: bool,
     ss: int,
+    histogram: bool,
     output: str,
 ):
     """Render a single Mandelbrot frame to PNG.
@@ -109,6 +113,8 @@ def render(
     console.print(f"  Palette:   {config.palette}")
     if ss > 1:
         console.print(f"  SSAA:      {ss}x ({ss*ss} samples/pixel)")
+    if histogram:
+        console.print(f"  Histogram: enabled")
     console.print(f"  Backend:   {backend}")
     console.print(f"  Engine:    {engine}")
     console.print(f"  Output:    {output}")
@@ -127,6 +133,7 @@ def render(
         palette_name=config.palette,
         use_gpu=use_gpu,
         supersampling=ss,
+        histogram=histogram,
     )
     elapsed = time.perf_counter() - start
 
@@ -220,6 +227,7 @@ def resolutions():
 )
 @click.option("--cpu", is_flag=True, default=False, help="Force CPU rendering.")
 @click.option("--ss", default=1, type=click.IntRange(1, 4), help="Supersampling (1=off, 2=4x AA, 3=9x).")
+@click.option("--histogram", is_flag=True, default=False, help="Apply histogram equalization for even color distribution.")
 @click.option("--frames-only", is_flag=True, default=False, help="Render frames only, skip encoding.")
 @click.option("--resume", is_flag=True, default=False, help="Resume an interrupted render (skip existing frames).")
 def zoom(
@@ -229,6 +237,7 @@ def zoom(
     encode_preset: str,
     cpu: bool,
     ss: int,
+    histogram: bool,
     frames_only: bool,
     resume: bool,
 ):
@@ -267,6 +276,8 @@ def zoom(
         console.print(f"  Zoom:      {kf_first.zoom:.2e} -> {kf_last.zoom:.2e}")
     if ss > 1:
         console.print(f"  SSAA:      {ss}x ({ss*ss} samples/pixel)")
+    if histogram:
+        console.print(f"  Histogram: enabled")
     console.print(f"  Backend:   {backend}")
     console.print(f"  Frames ->  {frames_path}")
     if not frames_only:
@@ -299,6 +310,7 @@ def zoom(
         skip_existing=resume,
         supersampling=ss,
         on_progress=on_progress,
+        histogram=histogram,
     )
 
     render_elapsed = time.perf_counter() - start
@@ -400,6 +412,108 @@ def zoom_template(output: str):
     console.print(f"  {len(sample.keyframes)} keyframes, {sample.total_frames} frames, {sample.duration_seconds:.1f}s")
     console.print("\nEdit the JSON, then run:")
     console.print(f"  [dim]fractalforge zoom {output_path}[/]")
+
+
+@cli.command()
+@click.argument("title")
+@click.option("--subtitle", "-s", default="", help="Subtitle text (e.g. zoom depth).")
+@click.option("--width", "-w", default=1920, type=int, help="Output width.")
+@click.option("--height", default=1080, type=int, help="Output height.")
+@click.option("--output", "-o", default="output/title_card.png", type=click.Path(), help="Output PNG path.")
+def title(title: str, subtitle: str, width: int, height: int, output: str):
+    """Generate a title card overlay (RGBA PNG) for video compositing.
+
+    TITLE is the main video title text.  The overlay has a semi-transparent
+    gradient, channel name, title, and optional subtitle -- ready to drop
+    onto a DaVinci Resolve timeline above the fractal footage.
+    """
+    from fractalforge.publish.titlecard import render_title_card
+
+    console.print(f"[bold cyan]FractalForge[/] v{__version__} -- Title Card")
+    console.print(f"  Title:     {title}")
+    if subtitle:
+        console.print(f"  Subtitle:  {subtitle}")
+    console.print(f"  Size:      {width}x{height}")
+    console.print(f"  Output:    {output}")
+    console.print()
+
+    output_path = Path(output)
+    img = render_title_card(
+        title=title,
+        subtitle=subtitle,
+        width=width,
+        height=height,
+        output_path=output_path,
+    )
+
+    file_size = output_path.stat().st_size
+    size_str = f"{file_size / 1024:.0f} KB" if file_size < 1_048_576 else f"{file_size / 1_048_576:.1f} MB"
+    console.print(f"[green]Done:[/] {img.size[0]}x{img.size[1]} RGBA -> {output_path} ({size_str})")
+
+
+@cli.command()
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--samples", "-n", default=5, type=int, help="Number of thumbnail candidates.")
+@click.option("--output-dir", "-o", default=None, type=click.Path(), help="Output directory for thumbnails.")
+@click.option("--title", "-t", default=None, type=str, help="Title text on thumbnail.")
+def thumbnail(path: str, samples: int, output_dir: str | None, title: str | None):
+    """Generate YouTube thumbnail candidates from a zoom path render.
+
+    PATH is the zoom path JSON file.  The command reads the zoom path to
+    determine the frames directory, frame count, and final zoom level, then
+    samples frames biased toward the deep end of the sequence.
+    """
+    from fractalforge.artist.zoompath import ZoomPath
+    from fractalforge.publish.thumbnail import generate_thumbnail_samples, format_zoom
+
+    zoom_path = ZoomPath.load(Path(path))
+
+    # Determine frames directory (same convention as zoom command)
+    frames_dir = Path(f"output/{zoom_path.name}_frames")
+
+    # Get final zoom level for the zoom text
+    if zoom_path.keyframes:
+        final_zoom = zoom_path.keyframes[-1].zoom
+        zoom_text = format_zoom(final_zoom)
+    else:
+        final_zoom = 1.0
+        zoom_text = None
+
+    out_dir = Path(output_dir) if output_dir else None
+
+    console.print(f"[bold cyan]FractalForge[/] v{__version__} -- Thumbnail Sampler")
+    console.print(f"  Path:      {path}")
+    console.print(f"  Name:      {zoom_path.name}")
+    console.print(f"  Frames:    {zoom_path.total_frames} in {frames_dir}")
+    console.print(f"  Zoom:      {final_zoom:.2e} ({zoom_text})")
+    console.print(f"  Samples:   {samples}")
+    if title:
+        console.print(f"  Title:     {title}")
+    console.print()
+
+    if not frames_dir.exists():
+        console.print(f"[red]Error:[/] Frames directory not found: {frames_dir}")
+        console.print("  Render the zoom path first with: fractalforge zoom " + path)
+        raise SystemExit(1)
+
+    paths = generate_thumbnail_samples(
+        frames_dir=frames_dir,
+        total_frames=zoom_path.total_frames,
+        num_samples=samples,
+        output_dir=out_dir,
+        title_text=title,
+        zoom_text=zoom_text,
+    )
+
+    if not paths:
+        console.print("[yellow]Warning:[/] No thumbnails generated (no matching frames found).")
+        return
+
+    console.print(f"[green]Done:[/] Generated {len(paths)} thumbnail(s):")
+    for p in paths:
+        file_size = p.stat().st_size
+        size_str = f"{file_size / 1024:.0f} KB"
+        console.print(f"  {p} ({size_str})")
 
 
 if __name__ == "__main__":
