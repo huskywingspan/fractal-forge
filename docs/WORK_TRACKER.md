@@ -47,19 +47,24 @@
 | P3-05 | Rebasing logic (handle delta orbit divergence) | ✅ Done | Falls back to standard iteration after ref escape |
 | P3-06 | Automatic precision selection (standard vs PT by zoom) | ✅ Done | Auto-switch at zoom >= 1e13, string coord support |
 
-## Phase 4: Artistic Layer
+## Phase 4: Artistic Layer & YouTube Pipeline
 
-*Goal: Post-processing, advanced coloring, visual polish.*
+*Goal: Visual polish and tooling for the Infinite Descent YouTube channel.*
 
 | ID | Item | Status | Notes |
 |----|------|--------|-------|
-| P4-01 | Histogram equalization for iteration counts | 🔲 Todo | |
+| P4-01 | Histogram equalization for iteration counts | 🔲 Todo | Biggest visual quality improvement |
 | P4-02 | Distance estimation coloring | 🔲 Todo | |
 | P4-03 | Orbit trap coloring modes | 🔲 Todo | |
 | P4-04 | Motion blur between frames | 🔲 Todo | |
-| P4-05 | Vignette and color grading post-process | 🔲 Todo | |
+| P4-05 | Vignette and color grading post-process | 🔲 Todo | Cinematic feel |
 | P4-06 | Anti-aliasing (supersampling) | ✅ Done | 2x SSAA via --ss flag, Lanczos downsample |
 | P4-07 | Palette editor / designer tool | 🔲 Todo | |
+| P4-08 | Title card overlay renderer (RGBA PNG) | 🔲 Todo | `fractalforge title` CLI, Montserrat/Rajdhani |
+| P4-09 | Thumbnail auto-sampler with text overlay | 🔲 Todo | `fractalforge thumbnail`, 1280x720, 5 candidates |
+| P4-10 | YouTube Shorts crop mode (9:16 vertical) | 🔲 Todo | `fractalforge short`, center-crop from 16:9 |
+| P4-11 | Brand asset config (colors, fonts, watermark) | 🔲 Todo | JSON brand config, Infinite Descent identity |
+| P4-12 | YouTube-optimized encode preset | 🔲 Todo | Proper bitrate/CRF for YouTube re-encoding |
 
 ## Phase 5: Production & Scaling
 
@@ -71,7 +76,8 @@
 | P5-02 | Distributed frame rendering (multi-GPU) | 🔲 Todo | |
 | P5-03 | Render queue / job management | 🔲 Todo | |
 | P5-04 | 4K render pipeline optimization | 🔲 Todo | |
-| P5-05 | Audio sync / soundtrack alignment | 🔲 Todo | |
+| P5-05 | Audio generation tool (ambient + binaural) | 🔲 Todo | `fractalforge audio`, custom per-video soundscapes |
+| P5-06 | Project manifest (single source of truth per video) | 🔲 Todo | JSON: preset, title, description, tags, assets |
 
 ---
 
