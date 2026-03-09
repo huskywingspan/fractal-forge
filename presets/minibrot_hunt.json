@@ -1,0 +1,44 @@
+{
+  "name": "minibrot_hunt",
+  "fps": 60,
+  "width": 1920,
+  "height": 1080,
+  "keyframes": [
+    {
+      "frame": 0,
+      "center_re": -0.75,
+      "center_im": 0.0,
+      "zoom": 1.0,
+      "max_iter": 500,
+      "palette": "monochrome",
+      "rotation": 0.0
+    },
+    {
+      "frame": 300,
+      "center_re": -1.769110375,
+      "center_im": 0.00,
+      "zoom": 50.0,
+      "max_iter": 2000,
+      "palette": "monochrome",
+      "rotation": 0.0
+    },
+    {
+      "frame": 900,
+      "center_re": -1.769110375463767,
+      "center_im": 0.00,
+      "zoom": 50000.0,
+      "max_iter": 5000,
+      "palette": "electric",
+      "rotation": 0.0
+    },
+    {
+      "frame": 1799,
+      "center_re": -1.769110375463767,
+      "center_im": 0.00,
+      "zoom": 100000000.0,
+      "max_iter": 8000,
+      "palette": "electric",
+      "rotation": 0.0
+    }
+  ]
+}

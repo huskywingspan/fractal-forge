@@ -74,28 +74,32 @@ def apply_palette(
     if histogram:
         smooth_data = histogram_equalize(smooth_data, palette_len)
 
-    # Mask for interior vs exterior
-    interior = smooth_data < 0
-    exterior = ~interior
+    # Process in row chunks to avoid OOM on large SSAA renders.
+    # At 8x SSAA on 1080p the intermediate coloring arrays would need ~13 GB
+    # if processed all at once. Chunking by rows keeps peak memory < 1 GB.
+    target_pixels = 8_000_000
+    rows_per_chunk = max(1, target_pixels // width)
 
-    if np.any(exterior):
-        # Normalize smooth values to palette indices with interpolation
-        ext_vals = smooth_data[exterior]
-        # Map to palette position (cyclic)
-        t = ext_vals % palette_len
-        idx0 = t.astype(np.int32) % palette_len
-        idx1 = (idx0 + 1) % palette_len
-        frac = (t - np.floor(t)).reshape(-1, 1)
+    for row_start in range(0, height, rows_per_chunk):
+        row_end = min(row_start + rows_per_chunk, height)
+        chunk = smooth_data[row_start:row_end]
+        interior = chunk < 0
+        exterior = ~interior
 
-        # Linear interpolation between adjacent palette colors
-        color0 = palette[idx0].astype(np.float64)
-        color1 = palette[idx1].astype(np.float64)
-        interpolated = (color0 * (1.0 - frac) + color1 * frac).astype(np.uint8)
+        if np.any(exterior):
+            ext_vals = chunk[exterior]
+            t = ext_vals % palette_len
+            idx0 = t.astype(np.int32) % palette_len
+            idx1 = (idx0 + 1) % palette_len
+            frac = (t - np.floor(t)).reshape(-1, 1)
 
-        rgb[exterior] = interpolated
+            color0 = palette[idx0].astype(np.float64)
+            color1 = palette[idx1].astype(np.float64)
+            interpolated = (color0 * (1.0 - frac) + color1 * frac).astype(np.uint8)
 
-    # Interior color
-    rgb[interior] = interior_color
+            rgb[row_start:row_end][exterior] = interpolated
+
+        rgb[row_start:row_end][interior] = interior_color
 
     return rgb
 

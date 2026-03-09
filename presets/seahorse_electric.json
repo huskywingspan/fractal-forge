@@ -1,0 +1,35 @@
+{
+  "name": "seahorse_electric",
+  "fps": 60,
+  "width": 1920,
+  "height": 1080,
+  "keyframes": [
+    {
+      "frame": 0,
+      "center_re": -0.75,
+      "center_im": 0.0,
+      "zoom": 1.0,
+      "max_iter": 500,
+      "palette": "electric",
+      "rotation": 0.0
+    },
+    {
+      "frame": 450,
+      "center_re": -0.74529,
+      "center_im": 0.11307,
+      "zoom": 800.0,
+      "max_iter": 1200,
+      "palette": "electric",
+      "rotation": 0.0
+    },
+    {
+      "frame": 1799,
+      "center_re": -0.74529,
+      "center_im": 0.11307,
+      "zoom": 5000000.0,
+      "max_iter": 3000,
+      "palette": "electric",
+      "rotation": 0.0
+    }
+  ]
+}

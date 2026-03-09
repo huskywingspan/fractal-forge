@@ -48,7 +48,7 @@ def cli():
     help="Resolution preset (e.g. 1080p, 4k, superwide).",
 )
 @click.option("--cpu", is_flag=True, default=False, help="Force CPU rendering (no GPU).")
-@click.option("--ss", default=1, type=click.IntRange(1, 4), help="Supersampling (1=off, 2=4x AA, 3=9x).")
+@click.option("--ss", default=1, type=click.IntRange(1, 8), help="Supersampling (1=off, 2=4x, 4=16x, 8=64x AA).")
 @click.option("--histogram", is_flag=True, default=False, help="Apply histogram equalization for even color distribution.")
 @click.option("--vignette", default=0.0, type=click.FloatRange(0.0, 1.0), help="Vignette strength (0=off, 0.5=moderate, 1=strong).")
 @click.option("--contrast", default=1.0, type=float, help="Contrast multiplier (1.0=unchanged).")
@@ -243,7 +243,7 @@ def resolutions():
     help="Video encoding preset.",
 )
 @click.option("--cpu", is_flag=True, default=False, help="Force CPU rendering.")
-@click.option("--ss", default=1, type=click.IntRange(1, 4), help="Supersampling (1=off, 2=4x AA, 3=9x).")
+@click.option("--ss", default=1, type=click.IntRange(1, 8), help="Supersampling (1=off, 2=4x, 4=16x, 8=64x AA).")
 @click.option("--histogram", is_flag=True, default=False, help="Apply histogram equalization for even color distribution.")
 @click.option("--vignette", default=0.0, type=click.FloatRange(0.0, 1.0), help="Vignette strength (0=off, 0.5=moderate, 1=strong).")
 @click.option("--contrast", default=1.0, type=float, help="Contrast multiplier (1.0=unchanged).")

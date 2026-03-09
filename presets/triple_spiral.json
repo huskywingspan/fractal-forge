@@ -1,0 +1,35 @@
+{
+  "name": "triple_spiral",
+  "fps": 60,
+  "width": 1920,
+  "height": 1080,
+  "keyframes": [
+    {
+      "frame": 0,
+      "center_re": -0.75,
+      "center_im": 0.0,
+      "zoom": 1.0,
+      "max_iter": 500,
+      "palette": "nebula",
+      "rotation": 0.0
+    },
+    {
+      "frame": 400,
+      "center_re": -0.0452,
+      "center_im": 0.9868,
+      "zoom": 500.0,
+      "max_iter": 1000,
+      "palette": "nebula",
+      "rotation": 0.0
+    },
+    {
+      "frame": 1799,
+      "center_re": -0.0452,
+      "center_im": 0.9868,
+      "zoom": 3000000.0,
+      "max_iter": 3000,
+      "palette": "nebula",
+      "rotation": 0.0
+    }
+  ]
+}
