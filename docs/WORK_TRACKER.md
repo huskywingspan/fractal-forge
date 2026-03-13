@@ -91,6 +91,11 @@
 | S4-02 | Julia wallpaper set (10) | ✅ Done | 5 c-params x 2 views (full + zoomed) |
 | S4-03 | Burning Ship zoom presets (3) | ✅ Done | full, antenna, armada |
 | S4-04 | Burning Ship wallpaper set (6) | ✅ Done | full, antenna, antenna_deep, armada, bow, smokestack |
+| S5-01 | Easing functions module | ✅ Done | `artist/easing.py`, 7 functions |
+| S5-02 | Catmull-Rom spline module | ✅ Done | `artist/spline.py`, zoom-scaled screen space |
+| S5-03 | Cinematic interpolation mode | ✅ Done | `zoompath.py`, C1-continuous via spline + easing |
+| S5-04 | Camera path preview CLI | ✅ Done | `fractalforge camera-path`, comparison plots |
+| S5-05 | `--interpolation` flag on zoom command | ✅ Done | Override mode at render time |
 
 ## Phase 5: Production & Scaling
 
@@ -113,7 +118,9 @@
 |----|------|----------|-------|
 | BL-01 | ~~Julia set support~~ | ✅ Done | Moved to Sprint alpha1.1.0 |
 | BL-02 | ~~Burning Ship fractal~~ | ✅ Done | Moved to Sprint alpha1.1.0 |
-| BL-03 | Interactive preview window (pygame/OpenGL) | Medium | Real-time zoom navigation |
+| BL-03 | Interactive viewer (Dear PyGui) | High | Real-time exploration, zoom path editor, coordinate discovery |
 | BL-04 | Web viewer (WebGPU) | Low | Browser-based preview |
 | BL-05 | Fractal location finder / scout tool | Medium | Auto-discover interesting zoom targets |
 | BL-06 | Benchmark suite | Medium | Track perf across changes |
+| BL-07 | Cinematic camera: palette crossfade | Medium | Blend palettes over transition window instead of hard cut |
+| BL-08 | Cinematic camera: per-keyframe easing presets | Low | "linear", "ease_in", "ease_out" per keyframe |

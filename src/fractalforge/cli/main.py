@@ -270,6 +270,11 @@ def resolutions():
 @click.option("--brightness", default=1.0, type=float, help="Brightness multiplier (1.0=unchanged).")
 @click.option("--frames-only", is_flag=True, default=False, help="Render frames only, skip encoding.")
 @click.option("--resume", is_flag=True, default=False, help="Resume an interrupted render (skip existing frames).")
+@click.option(
+    "--interpolation", "-I", default=None,
+    type=click.Choice(["legacy", "cinematic"], case_sensitive=False),
+    help="Override interpolation mode (default: from zoom path JSON).",
+)
 def zoom(
     path: str,
     frames_dir: str | None,
@@ -284,6 +289,7 @@ def zoom(
     brightness: float,
     frames_only: bool,
     resume: bool,
+    interpolation: str | None,
 ):
     """Render a zoom video from a zoom path JSON file.
 
@@ -295,6 +301,8 @@ def zoom(
     from fractalforge.render.video import encode_video, check_ffmpeg, get_video_info
 
     zoom_path = ZoomPath.load(Path(path))
+    if interpolation is not None:
+        zoom_path.interpolation = interpolation
     use_gpu = not cpu and CUDA_AVAILABLE
     backend = "GPU (CUDA)" if use_gpu else "CPU"
 
@@ -326,6 +334,8 @@ def zoom(
         console.print(f"  Vignette:  {vignette:.1f}")
     if contrast != 1.0 or saturation != 1.0 or brightness != 1.0:
         console.print(f"  Grade:     contrast={contrast:.2f} sat={saturation:.2f} bright={brightness:.2f}")
+    if zoom_path.interpolation != "legacy":
+        console.print(f"  Interp:    {zoom_path.interpolation}")
     console.print(f"  Backend:   {backend}")
     console.print(f"  Frames ->  {frames_path}")
     if not frames_only:
@@ -648,6 +658,52 @@ def short(path: str, start_frame: int | None, duration: int, output: str | None,
     file_size = video_path.stat().st_size
     size_str = f"{file_size / 1_048_576:.1f} MB" if file_size >= 1_048_576 else f"{file_size / 1024:.0f} KB"
     console.print(f"\n[green]Done:[/] {video_path} ({size_str})")
+
+
+@cli.command(name="camera-path")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--output", "-o", default=None, type=click.Path(), help="Output PNG path.")
+@click.option(
+    "--compare", is_flag=True, default=False,
+    help="Compare legacy vs cinematic interpolation side by side.",
+)
+@click.option(
+    "--mode", "-m", default=None,
+    type=click.Choice(["legacy", "cinematic"], case_sensitive=False),
+    help="Override interpolation mode for preview.",
+)
+def camera_path(path: str, output: str | None, compare: bool, mode: str | None):
+    """Visualize the camera path for a zoom path preset.
+
+    Generates a 4-panel plot showing position trajectory, zoom level,
+    screen-space velocity, and zoom rate. Useful for tuning keyframes
+    and verifying smooth motion.
+
+    Use --compare to see legacy vs cinematic side by side.
+    """
+    from fractalforge.artist.zoompath import ZoomPath
+    from fractalforge.artist.path_preview import render_path_preview
+
+    zoom_path = ZoomPath.load(Path(path))
+
+    if mode is not None:
+        zoom_path.interpolation = mode
+
+    if output is None:
+        suffix = "_compare" if compare else f"_{zoom_path.interpolation}"
+        output = f"output/{zoom_path.name}_camera_path{suffix}.png"
+
+    console.print(f"[bold cyan]FractalForge[/] v{__version__} -- Camera Path Preview")
+    console.print(f"  Path:          {path}")
+    console.print(f"  Name:          {zoom_path.name}")
+    console.print(f"  Keyframes:     {len(zoom_path.keyframes)}")
+    console.print(f"  Total frames:  {zoom_path.total_frames}")
+    console.print(f"  Mode:          {'comparison' if compare else zoom_path.interpolation}")
+    console.print(f"  Output:        {output}")
+    console.print()
+
+    out = render_path_preview(zoom_path, Path(output), compare=compare)
+    console.print(f"[green]Done:[/] Camera path preview saved to {out}")
 
 
 @cli.command(name="compile")

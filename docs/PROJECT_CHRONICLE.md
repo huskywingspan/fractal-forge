@@ -192,6 +192,27 @@
 - Frames are renumbered sequentially, then encoded via the standard FFmpeg pipeline
 - Extensible: future transition types (fade_black, wipe, zoom_match) can be added as new blend functions
 
+### AD-010: Cinematic Camera Motion System
+
+**Date:** 2026-03-12
+**Decision:** Add a `"cinematic"` interpolation mode alongside the existing `"legacy"` mode for zoom paths.
+**Problem:**
+
+- Legacy zoom-weighted interpolation creates C0-continuous but not C1-continuous paths
+- At keyframe boundaries where the target center changes, camera velocity jumps abruptly (visible as "jump cuts")
+- Zoom rate also steps discontinuously between segments with different zoom ratios
+
+**Solution:**
+
+- **Catmull-Rom splines in zoom-scaled screen space** for position: `screen_pos = (center - reference) * zoom`. This ensures distances correspond to visual distances, preventing overshoots at deep zoom.
+- **Easing functions** (Hermite smoothstep) on per-segment t for zoom interpolation: smooth acceleration/deceleration at keyframe boundaries
+- New fields on `Keyframe`: `easing` (default "ease_in_out"), `tension` (default 0.5)
+- New field on `ZoomPath`: `interpolation` (default "legacy")
+- `camera-path` CLI command for visualizing path quality (position, velocity, zoom rate plots)
+- For 2-keyframe paths, falls back to legacy (which is already optimal for single-target dives)
+
+**Key insight:** The spline must operate in screen-space (`(center - ref) * zoom`), not raw complex-plane coordinates, because at deep zoom a tiny complex-plane offset can fill the entire screen.
+
 ---
 
 ## Performance Notes
