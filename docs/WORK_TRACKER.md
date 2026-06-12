@@ -97,6 +97,46 @@
 | S5-04 | Camera path preview CLI | ✅ Done | `fractalforge camera-path`, comparison plots |
 | S5-05 | `--interpolation` flag on zoom command | ✅ Done | Override mode at render time |
 
+## Sprint DZ-P1: Deep Zoom Phase 1 -- Precision & Rebasing
+
+*Goal: Stable rendering at 1e50 zoom (up from 1e15 limit).*
+
+| ID | Item | Status | Notes |
+|----|------|--------|-------|
+| DZ-P1-01 | Precision formula: 1.5*log10(zoom)+30 | ✅ Done | Plus coordinate string digit floor |
+| DZ-P1-02 | Arbitrary-precision SA coefficients | ✅ Done | gmpy2/mpmath HP, downcast to float64 |
+| DZ-P1-03 | Proactive rebasing in all 4 kernels | ✅ Done | CUDA+CPU perturbation & BLA, total_iters tracking |
+| DZ-P1-04 | Glitch tolerance relaxation | ✅ Done | 0.3 ramp, 1e-2 floor (was 0.5/1e-6) |
+
+## Sprint DZ-P3: Newton-Raphson Coordinate Finder
+
+*Goal: Automated discovery of precise boundary coordinates for deep zoom.*
+
+| ID | Item | Status | Notes |
+|----|------|--------|-------|
+| DZ-P3-01 | Period detection | ✅ Done | Orbit minimum tracking, handles exterior points |
+| DZ-P3-02 | Newton's method for nucleus finding | ✅ Done | Arbitrary precision, auto period verification |
+| DZ-P3-03 | Boundary point finder (internal angles) | ✅ Done | Full Jacobian, cusp offset workaround |
+| DZ-P3-04 | `fractalforge discover` CLI | ✅ Done | JSON output, render test previews, CLI-ready commands |
+| DZ-P3-05 | `fractalforge scan-region` CLI | ✅ Done | Grid scan for nuclei in a region |
+| DZ-P3-06 | Deep target finder (nested minibrots) | ✅ Done | Recursive period-doubling/tripling |
+| DZ-P3-07 | Updated test coordinates | ✅ Done | Newton-exact boundary + deep stress tests |
+
+## Sprint: Ultra Deep Zoom & Viewer Video Render
+
+*Goal: 1e200+ deep zoom capability and in-viewer video render launch.*
+
+| ID | Item | Status | Notes |
+|----|------|--------|-------|
+| DZ-01 | gmpy2 fast path for reference orbit | ✅ Done | 8x speedup over mpmath at 50-digit precision |
+| DZ-02 | BLA coefficient computation (bla.py) | ✅ Done | Binary tree of linear approx coefficients |
+| DZ-03 | BLA CUDA + CPU kernel (bla_kernel.py) | ✅ Done | Adaptive iteration skipping, falls back to single-step |
+| DZ-04 | BLA integration into perturbation pipeline | ✅ Done | Auto-enabled when ref orbit > 100 iters |
+| DZ-05 | ZoomPath hp string coordinates | ✅ Done | center_re_hp/center_im_hp fields, mpmath interpolation |
+| DZ-06 | Sequence renderer hp coord support | ✅ Done | Uses hp strings for perturbation frames |
+| DZ-07 | Video render panel in viewer | ✅ Done | Resolution, duration, FPS, preset, SSAA, progress |
+| DZ-08 | Viewer video render integration | ✅ Done | Background thread, cancel, auto zoom path generation |
+
 ## Phase 5: Production & Scaling
 
 *Goal: RunPod integration, 4K renders, production workflow.*
@@ -118,9 +158,9 @@
 |----|------|----------|-------|
 | BL-01 | ~~Julia set support~~ | ✅ Done | Moved to Sprint alpha1.1.0 |
 | BL-02 | ~~Burning Ship fractal~~ | ✅ Done | Moved to Sprint alpha1.1.0 |
-| BL-03 | Interactive viewer (Dear PyGui) | High | Real-time exploration, zoom path editor, coordinate discovery |
+| BL-03 | ~~Interactive viewer (Dear PyGui)~~ | ✅ Done | V1 MVP: canvas, controls, coords, bookmarks. `fractalforge viewer` |
 | BL-04 | Web viewer (WebGPU) | Low | Browser-based preview |
-| BL-05 | Fractal location finder / scout tool | Medium | Auto-discover interesting zoom targets |
+| BL-05 | ~~Fractal location finder / scout tool~~ | ✅ Done | `fractalforge discover` + `scan-region`, Newton-Raphson |
 | BL-06 | Benchmark suite | Medium | Track perf across changes |
 | BL-07 | Cinematic camera: palette crossfade | Medium | Blend palettes over transition window instead of hard cut |
 | BL-08 | Cinematic camera: per-keyframe easing presets | Low | "linear", "ease_in", "ease_out" per keyframe |

@@ -25,7 +25,13 @@
 | **Compilation Pipeline** | ✅ Done | Multi-clip assembly with crossfade transitions |
 | **Post-Processing** | ✅ Done | Vignette, contrast/saturation/brightness, histogram EQ, 8x SSAA |
 | **YouTube Pipeline** | ✅ Done | Title cards, thumbnails, Shorts, YouTube encode preset |
-| **Live Preview** | 🔲 Planned | Interactive zoom preview window |
+| **Live Preview** | ✅ Done | Dear PyGui viewer: canvas, controls, coords, video render panel |
+| **BLA (Deep Zoom Accel)** | ✅ Done | Bilinear approximation for iteration skipping at 1e50+ |
+| **gmpy2 Fast Path** | ✅ Done | 8x reference orbit speedup over mpmath |
+| **Viewer Video Render** | ✅ Done | In-viewer render launch: explore -> find point -> render video |
+| **Proactive Rebasing** | ✅ Done | Inline rebasing in all 4 kernels, total_iters tracking |
+| **HP SA Coefficients** | ✅ Done | Series approx in gmpy2/mpmath, eliminates truncation at 1e13+ |
+| **Newton-Raphson Finder** | ✅ Done | Period detect, nucleus, boundary points, scan-region, deep target |
 | **RunPod Integration** | 🔲 Future | Remote GPU rendering for 4K final output |
 
 ### Rendering Targets
@@ -342,3 +348,99 @@ At 8x SSAA on 1080p (15360x8640 = 132M pixels), the palette coloring step tried 
 
 **Date:** 2026-03-09
 Unlike Mandelbrot, where the main cardioid boundary is well-known, Julia set boundaries depend on the c-parameter and are not predictable from coordinates alone. Arbitrary deep zoom coordinates in Julia sets often land in regions with uniform iteration counts, producing boring wallpapers (3-8 unique colors). Moderate zooms (4-10x) near visually obvious boundary regions work much better for wallpapers. For zoom videos, start wide (zoom=1) and let the camera find the boundary naturally.
+
+---
+
+## Architecture Decisions (cont.)
+
+### AD-011: Interactive Viewer Architecture (Dear PyGui)
+
+**Date:** 2026-03-12
+**Decision:** Use Dear PyGui for the interactive fractal explorer, with a single-threaded GPU render bridge via ThreadPoolExecutor.
+
+**Alternatives considered:**
+- PyQt6/PySide6: Heavier, widget-based, slower texture updates for real-time display.
+- pygame: No built-in widgets for sliders, panels, docking.
+- tkinter: Poor GPU texture support, outdated.
+
+**Key design choices:**
+1. **Raw RGBA float32 textures** — DPG can update textures directly from flat float arrays, no PIL/QImage roundtrip.
+2. **ThreadPoolExecutor(max_workers=1)** — Keeps GPU render off the UI thread. Only one render in-flight at a time; stale requests are replaced (not queued).
+3. **ViewerState dataclass** — All mutable state in one object. Components read/write it freely; `render_pending` flag triggers re-render on next tick.
+4. **Pixel-to-complex mapping** — `view_height = 3.0/zoom`, `view_width = view_height * aspect`. This matches the render pipeline's coordinate system exactly.
+5. **Zoom-toward-cursor** — Compute complex coord under cursor before and after zoom change, adjust center by the difference to keep the point visually fixed.
+6. **Module split** — `state.py` (data), `render_bridge.py` (async GPU), `canvas.py` (display + mouse), `controls.py` (parameter UI), `coordinate_panel.py` (HUD + bookmarks), `video_panel.py` (video render launch), `app.py` (lifecycle + layout).
+
+---
+
+### AD-013: Newton-Raphson Coordinate Finder
+
+**Date:** 2026-03-14
+**Decision:** Implement Newton's method for finding precise boundary coordinates at arbitrary precision.
+
+**Problem:** Deep zoom rendering requires coordinates precisely on the Mandelbrot set boundary, where fractal detail exists at every scale. Approximate coordinates (hand-picked from viewers) run out of precision at extreme zoom and may not sit on the boundary at all.
+
+**Architecture (`engine/newton.py`):**
+
+1. **Period detection** -- iterate z=z^2+c and track |z_n| minimum. The period is the smallest n where the orbit passes closest to 0. Handles exterior points gracefully (returns best period found before escape).
+2. **Nucleus finding** -- Newton's method on f^p(0,c) = 0. Derivative dz/dc tracked alongside the orbit. Includes period verification: checks all divisors of detected period to find the TRUE minimal period (prevents convergence to sub-period nuclei).
+3. **Boundary point finding** -- 2D Newton on the system [f^p(z,c) = z, df^p/dz = e^{2*pi*i*theta}]. Requires second derivatives (d^2z/dz0^2, d^2z/(dz0*dc)). Cusp point (angle=0) uses tiny offset (1e-10) to avoid degenerate Jacobian.
+4. **Deep target finder** -- recursive nested minibrot discovery by following period-doubling/tripling cascades.
+5. **Region scanner** -- grid search for nuclei of different periods.
+
+**CLI:** `fractalforge discover` (boundary point discovery), `fractalforge scan-region` (grid search). Both output JSON and CLI-ready render commands.
+
+**Key lessons:**
+
+- The cusp of a hyperbolic component has degenerate Jacobian (multiplier = 1 makes the first element of the Jacobian row zero). Standard workaround: use angle offset 1e-10.
+- Period detection can find multiples of the true period. Always verify by checking divisors after Newton convergence.
+- Boundary points are IN the set (they're on the Julia set). For rendering, use zoom levels matching the component scale (1/size) to see boundary structure.
+- Points near but slightly outside the boundary give the best renders (mix of interior/exterior). Points exactly on the boundary show up as interior at extreme zoom.
+
+---
+
+### AD-012: Deep Zoom Phase 1 -- Precision & Rebasing
+
+**Date:** 2026-03-14
+**Decision:** Implement four changes to push rendering from 1e15 to 1e50 zoom.
+
+**Changes:**
+
+1. **Precision formula**: `1.5 * log10(zoom) + 30` (was `log10(zoom) + 10`). Plus floor at coordinate string digits + 20.
+2. **HP SA coefficients**: Series approximation A/B/C computed in gmpy2/mpmath at zoom >= 1e13, preventing float64 truncation.
+3. **Proactive rebasing**: When |Z+d| < |d|, fold delta back: d = Z+d, restart reference index. Added to all 4 kernels (CUDA/CPU perturbation, CUDA/CPU BLA). `total_iters` counter tracks actual work and NEVER resets on rebase.
+4. **Glitch tolerance relaxation**: Ramp 0.3 (was 0.5), floor 1e-2 (was 1e-6). With rebasing handling precision issues, glitch detection becomes a safety net.
+
+**Key bug:** Rebasing at moderate zoom (< 1e13) caused infinite loops because delta and reference magnitudes are similar. Fix: `enable_rebasing` flag gated on `zoom >= 1e13`.
+
+**Key bug:** Interior reference orbits + rebasing = infinite loop. `iteration` resets to 0 on rebase but `while iteration < max_iter` never terminates because max_iter is large. Fix: `total_iters` counter that increments on every step and is used for the loop termination condition.
+
+---
+
+### AD-010: BLA (Bilinear Approximation) for Ultra-Deep Zoom
+
+**Date:** 2026-03-13
+**Decision:** Implement BLA to skip large blocks of perturbation iterations at deep zoom (1e50+).
+
+**Architecture:**
+1. **BLA table** (`engine/bla.py`): Pre-compute linear approximation coefficients from the reference orbit in a binary tree structure. Level 0 = single-step (A=2*Z_n, B=1), higher levels composed by pairing: A_{2k}(n) = A_k(n+k) * A_k(n). Validity radius r(n) = epsilon/|A| where epsilon scales with pixel spacing.
+2. **BLA kernel** (`engine/bla_kernel.py`): At each iteration, try BLA jumps from highest level down. First valid jump (|d| < validity_radius) skips 2^level iterations. Falls back to single-step when near escape/glitch boundaries.
+3. **Integration**: Auto-enabled in `perturbation.py` when reference orbit > 100 iterations. BLA table also computed for glitch correction passes.
+
+**Key insight:** BLA speedup scales with zoom depth. At 1e14 with 5000 iterations, glitch detection terminates most pixels early, so BLA overhead dominates. At 1e50+ with millions of iterations, BLA should provide 100-1000x speedup.
+
+**gmpy2 fast path:** Added `gmpy2` detection in `precision.py` — 8x faster reference orbit computation than mpmath at 50-digit precision. Falls back to mpmath when not installed.
+
+---
+
+### AD-011: Viewer Video Render Pipeline
+
+**Date:** 2026-03-13
+**Decision:** Enable "explore → find point → render video" workflow directly from the viewer UI.
+
+**Architecture:**
+1. **Video panel** (`viewer/video_panel.py`): Configurable render settings (resolution, duration, FPS, codec preset, SSAA, histogram EQ). Snapshots current viewer position as target.
+2. **Auto zoom path**: Generates a two-keyframe ZoomPath from zoom=1.0 to the target zoom level. Uses hp string coordinates for deep zoom precision.
+3. **Background thread**: Renders frames via `render_sequence()` with cancel support. Encodes to video via FFmpeg on completion.
+4. **HP coordinate interpolation** (`zoompath.py`): New `_interp_coords_hp()` uses mpmath for zoom-weighted position interpolation when target zoom >= 1e13. Keyframe dataclass extended with `center_re_hp`/`center_im_hp` fields.
+5. **Sequence renderer** (`render/sequence.py`): Updated to pass hp string coordinates to `render_frame_perturbation()` when available.
