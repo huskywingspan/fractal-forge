@@ -22,7 +22,10 @@ import time
 import numpy as np
 from numba import cuda, njit, prange
 
-from fractalforge.engine.precision import compute_reference_orbit, ReferenceOrbit
+from fractalforge.engine.precision import (
+    compute_reference_orbit, compute_series_approximation_hp, ReferenceOrbit,
+)
+from fractalforge.engine.bla import compute_bla_table, BLATable
 
 
 # ============================================================================
@@ -31,7 +34,8 @@ from fractalforge.engine.precision import compute_reference_orbit, ReferenceOrbi
 
 @njit(cache=True)
 def _compute_series_approximation(
-    z_re, z_im, num_iters, dc_max_mag_sq, tolerance
+    z_re, z_im, num_iters, dc_max_mag_sq, tolerance,
+    probe_dc_re=None, probe_dc_im=None, pixel_spacing=0.0,
 ):
     """Compute series approximation coefficients A, B, C.
 
@@ -47,7 +51,6 @@ def _compute_series_approximation(
     dc_max_mag = math.sqrt(dc_max_mag_sq)
     dc_max_cubed = dc_max_mag * dc_max_mag * dc_max_mag
 
-    # A_0 = 0, B_0 = 0, C_0 = 0
     a_re = 0.0
     a_im = 0.0
     b_re = 0.0
@@ -56,24 +59,38 @@ def _compute_series_approximation(
     c_im = 0.0
 
     skip_iters = 0
+    save_a_re = a_re
+    save_a_im = a_im
+    save_b_re = b_re
+    save_b_im = b_im
+    save_c_re = c_re
+    save_c_im = c_im
+
+    # Probe validation: track true deltas at sample points
+    use_probes = probe_dc_re is not None and len(probe_dc_re) > 0
+    num_probes = len(probe_dc_re) if use_probes else 0
+    # Numba needs fixed-size arrays — allocate for probes
+    if use_probes:
+        pd_re = probe_dc_re.copy()  # true deltas, start as dc
+        pd_im = probe_dc_im.copy()
+        probe_tol_floor = max(pixel_spacing * 1e-6, 1e-30)
+    else:
+        pd_re = np.empty(0)
+        pd_im = np.empty(0)
+        probe_tol_floor = 1e-30
 
     for n in range(num_iters):
         zn_re = z_re[n]
         zn_im = z_im[n]
 
-        # A_{n+1} = 2*Z_n*A_n + 1
-        # (2*Z_n*A_n) = 2*(zn_re*a_re - zn_im*a_im, zn_re*a_im + zn_im*a_re)
         new_a_re = 2.0 * (zn_re * a_re - zn_im * a_im) + 1.0
         new_a_im = 2.0 * (zn_re * a_im + zn_im * a_re)
 
-        # B_{n+1} = 2*Z_n*B_n + A_n^2
-        # A_n^2 = (a_re^2 - a_im^2, 2*a_re*a_im)
         a_sq_re = a_re * a_re - a_im * a_im
         a_sq_im = 2.0 * a_re * a_im
         new_b_re = 2.0 * (zn_re * b_re - zn_im * b_im) + a_sq_re
         new_b_im = 2.0 * (zn_re * b_im + zn_im * b_re) + a_sq_im
 
-        # C_{n+1} = 2*Z_n*C_n + 2*A_n*B_n
         ab_re = a_re * b_re - a_im * b_im
         ab_im = a_re * b_im + a_im * b_re
         new_c_re = 2.0 * (zn_re * c_re - zn_im * c_im) + 2.0 * ab_re
@@ -83,12 +100,46 @@ def _compute_series_approximation(
         b_re, b_im = new_b_re, new_b_im
         c_re, c_im = new_c_re, new_c_im
 
-        # Check if series approximation is still valid:
-        # |C_n * dc_max^3| < tolerance
         c_mag = math.sqrt(c_re * c_re + c_im * c_im)
         if c_mag * dc_max_cubed > tolerance:
-            break
+            return skip_iters, save_a_re, save_a_im, save_b_re, save_b_im, save_c_re, save_c_im
 
+        # Probe validation: advance probes and compare against SA polynomial
+        if use_probes:
+            probe_failed = False
+            for p in range(num_probes):
+                # Advance probe: d_{n+1} = 2*Z_n*d_n + d_n^2 + dc
+                new_pr = (2.0 * (zn_re * pd_re[p] - zn_im * pd_im[p])
+                          + pd_re[p] * pd_re[p] - pd_im[p] * pd_im[p]
+                          + probe_dc_re[p])
+                new_pi = (2.0 * (zn_re * pd_im[p] + zn_im * pd_re[p])
+                          + 2.0 * pd_re[p] * pd_im[p] + probe_dc_im[p])
+                pd_re[p] = new_pr
+                pd_im[p] = new_pi
+
+                # Evaluate SA polynomial at this probe
+                pcr = probe_dc_re[p]
+                pci = probe_dc_im[p]
+                dc2r = pcr * pcr - pci * pci
+                dc2i = 2.0 * pcr * pci
+                dc3r = pcr * dc2r - pci * dc2i
+                dc3i = pcr * dc2i + pci * dc2r
+                sa_r = (a_re * pcr - a_im * pci + b_re * dc2r - b_im * dc2i
+                        + c_re * dc3r - c_im * dc3i)
+                sa_i = (a_re * pci + a_im * pcr + b_re * dc2i + b_im * dc2r
+                        + c_re * dc3i + c_im * dc3r)
+                err_sq = (sa_r - pd_re[p])**2 + (sa_i - pd_im[p])**2
+                true_sq = pd_re[p]**2 + pd_im[p]**2
+                threshold = max(true_sq * 1e-6, probe_tol_floor * probe_tol_floor)
+                if err_sq > threshold:
+                    probe_failed = True
+                    break
+            if probe_failed:
+                return skip_iters, save_a_re, save_a_im, save_b_re, save_b_im, save_c_re, save_c_im
+
+        save_a_re, save_a_im = a_re, a_im
+        save_b_re, save_b_im = b_re, b_im
+        save_c_re, save_c_im = c_re, c_im
         skip_iters = n + 1
 
     return skip_iters, a_re, a_im, b_re, b_im, c_re, c_im
@@ -106,6 +157,7 @@ def _perturbation_cuda(
     max_iter,
     sa_skip, sa_a_re, sa_a_im, sa_b_re, sa_b_im, sa_c_re, sa_c_im,
     glitch_tolerance,
+    enable_rebasing,
     smooth_out, glitch_out,
 ):
     """CUDA kernel: perturbation iteration, one thread per pixel.
@@ -116,7 +168,7 @@ def _perturbation_cuda(
     With series approximation: d_{sa_skip} = A*dc + B*dc^2 + C*dc^3,
     then iterate from sa_skip onward.
 
-    Rebasing: if reference escapes but pixel hasn't, switch to standard iteration.
+    Proactive rebasing (DZ-P1-03): when |Z+d| < |d|, fold delta back.
     Glitch detection: flag when |d_n|^2 > tolerance * |Z_n|^2.
     """
     x, y = cuda.grid(2)
@@ -155,9 +207,10 @@ def _perturbation_cuda(
         iteration = 1  # start from iteration 1 (Z_0=0, d_0=dc gives Z_1+d_1)
 
     glitch_out[x, y] = 0
+    total_iters = iteration  # tracks actual computation steps (survives rebasing)
 
     # Phase 1: Perturbation iteration (while reference orbit is valid)
-    while iteration < max_iter and iteration <= ref_num_iters:
+    while iteration <= ref_num_iters and total_iters < max_iter:
         zn_re = z_re[iteration]
         zn_im = z_im[iteration]
 
@@ -171,13 +224,25 @@ def _perturbation_cuda(
             # Smooth coloring
             log_zn = 0.5 * math.log(full_mag_sq)
             nu = math.log(log_zn / math.log(2.0)) / math.log(2.0)
-            smooth_out[x, y] = float(iteration) + 1.0 - nu
+            smooth_out[x, y] = float(total_iters) + 1.0 - nu
             return
 
-        # P3-03: Glitch detection
+        # DZ-P1-03: Proactive rebasing (only at deep zoom where deltas are tiny)
+        # When |Z_n + d_n| < |d_n|, the orbit nears 0 and cancellation is imminent.
+        # Fold the delta back: d = Z+d, restart reference from iteration 0.
         d_mag_sq = d_re * d_re + d_im * d_im
+        if enable_rebasing and full_mag_sq < d_mag_sq:
+            d_re = full_re
+            d_im = full_im
+            iteration = 0
+            total_iters += 1
+            continue
+
+        # P3-03: Glitch detection (safety net, most issues caught by rebasing)
+        # Skip when |Z_n|^2 < 1e-3: near-zero orbit points are expected in
+        # periodic orbits (e.g., period-16 near the antenna), not glitches.
         zn_mag_sq = z_mag_sq[iteration]
-        if zn_mag_sq > 0.0 and d_mag_sq > glitch_tolerance * zn_mag_sq:
+        if zn_mag_sq > 1e-3 and d_mag_sq > glitch_tolerance * zn_mag_sq:
             glitch_out[x, y] = 1
             smooth_out[x, y] = -1.0
             return
@@ -189,49 +254,37 @@ def _perturbation_cuda(
         d_im = d_im_new
 
         iteration += 1
+        total_iters += 1
 
-    # P3-05: Rebasing -- reference escaped but pixel hasn't
-    # Compute full value and continue with standard iteration
+    # Post-reference: reference escaped but pixel hasn't.
+    # Reconstruct full z and continue with standard iteration.
     if iteration <= ref_num_iters:
         full_re = z_re[iteration] + d_re
         full_im = z_im[iteration] + d_im
     else:
-        # Past reference orbit end, reconstruct full z
         full_re = z_re[ref_num_iters] + d_re
         full_im = z_im[ref_num_iters] + d_im
 
-    # Compute actual c = C + dc (using last reference center + dc offset)
-    # We approximate c from the full z value at the rebasing point
-    # Actually: c_re = center_re + dc_re, c_im = center_im + dc_im
-    # But we don't have center as float64 here with sufficient precision.
-    # Instead, the pixel's c is: z[0]^2 + c should give z[1], but z[0]=0 so c=z[1].
-    # For rebasing, we use: c_re = dc_re (since center is the reference,
-    # and the reference Z_1 = C, so dc is the offset from C in complex plane).
-    # Actually we need the actual c value. Since dc = c - C, and reference starts at Z_0=0,
-    # we can recover c as a float64 approximation: c ~ Z_1 + dc (not correct).
-    # The correct approach: c_re = (center float64) + dc_re, but we don't pass center.
-    # Simplest correct: pass center coordinates to kernel too.
-    # But for a CUDA kernel, we can use z_re[1] and z_im[1] since Z_1 = C for Mandelbrot.
-    # Z_1 = Z_0^2 + C = 0 + C = C. So c_re = z_re[1] + dc_re (as float64 offset).
+    # c = C + dc. Z_1 = Z_0^2 + C = 0 + C = C, so c = z_re[1] + dc.
     c_re = z_re[1] + dc_re
     c_im = z_im[1] + dc_im
 
     z_r = full_re
     z_i = full_im
 
-    while iteration < max_iter:
+    while total_iters < max_iter:
         z_r_sq = z_r * z_r
         z_i_sq = z_i * z_i
 
         if z_r_sq + z_i_sq > escape_radius_sq:
             log_zn = 0.5 * math.log(z_r_sq + z_i_sq)
             nu = math.log(log_zn / math.log(2.0)) / math.log(2.0)
-            smooth_out[x, y] = float(iteration) + 1.0 - nu
+            smooth_out[x, y] = float(total_iters) + 1.0 - nu
             return
 
         z_i = 2.0 * z_r * z_i + c_im
         z_r = z_r_sq - z_i_sq + c_re
-        iteration += 1
+        total_iters += 1
 
     # Interior point
     smooth_out[x, y] = -1.0
@@ -250,6 +303,7 @@ def _perturbation_cpu(
     height, width,
     sa_skip, sa_a_re, sa_a_im, sa_b_re, sa_b_im, sa_c_re, sa_c_im,
     glitch_tolerance,
+    enable_rebasing,
 ):
     """CPU kernel: perturbation iteration with Numba parallel JIT.
 
@@ -287,9 +341,10 @@ def _perturbation_cpu(
 
             glitched = False
             escaped = False
+            total_iters = iteration
 
             # Phase 1: Perturbation iteration
-            while iteration < max_iter and iteration <= ref_num_iters:
+            while iteration <= ref_num_iters and total_iters < max_iter:
                 zn_re = z_re[iteration]
                 zn_im = z_im[iteration]
 
@@ -300,14 +355,22 @@ def _perturbation_cpu(
                 if full_mag_sq > escape_radius_sq:
                     log_zn = 0.5 * math.log(full_mag_sq)
                     nu = math.log(log_zn / log2) / log2
-                    smooth_out[x, y] = float(iteration) + 1.0 - nu
+                    smooth_out[x, y] = float(total_iters) + 1.0 - nu
                     escaped = True
                     break
 
-                # Glitch detection
+                # DZ-P1-03: Proactive rebasing (deep zoom only)
                 d_mag_sq = d_re * d_re + d_im * d_im
+                if enable_rebasing and full_mag_sq < d_mag_sq:
+                    d_re = full_re
+                    d_im = full_im
+                    iteration = 0
+                    total_iters += 1
+                    continue
+
+                # Glitch detection (safety net, skip near-zero orbit points)
                 zn_mag_sq = z_mag_sq[iteration]
-                if zn_mag_sq > 0.0 and d_mag_sq > glitch_tolerance * zn_mag_sq:
+                if zn_mag_sq > 1e-3 and d_mag_sq > glitch_tolerance * zn_mag_sq:
                     glitch_out[x, y] = 1
                     smooth_out[x, y] = -1.0
                     glitched = True
@@ -320,11 +383,12 @@ def _perturbation_cpu(
                 d_im = d_im_new
 
                 iteration += 1
+                total_iters += 1
 
             if escaped or glitched:
                 continue
 
-            # P3-05: Rebasing
+            # Post-reference: reference escaped but pixel hasn't
             if iteration <= ref_num_iters:
                 full_re = z_re[iteration] + d_re
                 full_im = z_im[iteration] + d_im
@@ -339,20 +403,20 @@ def _perturbation_cpu(
             z_i = full_im
 
             standard_escaped = False
-            while iteration < max_iter:
+            while total_iters < max_iter:
                 z_r_sq = z_r * z_r
                 z_i_sq = z_i * z_i
 
                 if z_r_sq + z_i_sq > escape_radius_sq:
                     log_zn = 0.5 * math.log(z_r_sq + z_i_sq)
                     nu = math.log(log_zn / log2) / log2
-                    smooth_out[x, y] = float(iteration) + 1.0 - nu
+                    smooth_out[x, y] = float(total_iters) + 1.0 - nu
                     standard_escaped = True
                     break
 
                 z_i = 2.0 * z_r * z_i + c_im
                 z_r = z_r_sq - z_i_sq + c_re
-                iteration += 1
+                total_iters += 1
 
             if not standard_escaped:
                 smooth_out[x, y] = -1.0
@@ -371,6 +435,7 @@ def _render_gpu_perturbation(
     max_iter, height, width,
     sa_skip, sa_a_re, sa_a_im, sa_b_re, sa_b_im, sa_c_re, sa_c_im,
     glitch_tolerance,
+    enable_rebasing=True,
 ):
     """Dispatch perturbation iteration to CUDA kernel."""
     # Upload reference orbit to device
@@ -396,6 +461,7 @@ def _render_gpu_perturbation(
         max_iter,
         sa_skip, sa_a_re, sa_a_im, sa_b_re, sa_b_im, sa_c_re, sa_c_im,
         glitch_tolerance,
+        enable_rebasing,
         d_smooth, d_glitch,
     )
 
@@ -527,36 +593,88 @@ def render_frame_perturbation(
     # SA is only beneficial at deep zoom where dc is tiny (dc ~ 1e-50).
     # At moderate zoom, the cubic approximation d_n ~ A*dc + B*dc^2 + C*dc^3
     # introduces significant error since dc^3 is not negligible.
+    #
+    # Probe-based validation: compute SA polynomial at 8 sample points and
+    # compare against actual perturbation iteration. This catches divergent
+    # series that pass analytical checks (chaotic orbits near the antenna).
     sa_tolerance = 1e-6
+    pixel_spacing = view_height / height
     if zoom >= 1e8 and ref.num_iters > 10:
-        sa_skip, sa_a_re, sa_a_im, sa_b_re, sa_b_im, sa_c_re, sa_c_im = (
-            _compute_series_approximation(
-                ref.z_re, ref.z_im, ref.num_iters, dc_max_mag_sq, sa_tolerance
+        # Compute 8 probe dc values: 4 corners + 4 edge midpoints
+        max_dc_re_val = abs(min_dc_re) + step_dc_re * (width - 1)
+        max_dc_im_val = abs(min_dc_im) + step_dc_im * (height - 1)
+        probe_dc_re = np.array([
+            min_dc_re, max_dc_re_val, min_dc_re, max_dc_re_val,  # corners
+            0.0, max_dc_re_val, 0.0, min_dc_re,                  # edge midpoints
+        ], dtype=np.float64)
+        probe_dc_im = np.array([
+            min_dc_im, min_dc_im, max_dc_im_val, max_dc_im_val,  # corners
+            min_dc_im, 0.0, max_dc_im_val, 0.0,                  # edge midpoints
+        ], dtype=np.float64)
+
+        if zoom >= 1e13:
+            sa_skip, sa_a_re, sa_a_im, sa_b_re, sa_b_im, sa_c_re, sa_c_im = (
+                compute_series_approximation_hp(
+                    ref, dc_max_mag_sq, sa_tolerance,
+                    probe_dc_re, probe_dc_im, pixel_spacing,
+                )
             )
-        )
+        else:
+            sa_skip, sa_a_re, sa_a_im, sa_b_re, sa_b_im, sa_c_re, sa_c_im = (
+                _compute_series_approximation(
+                    ref.z_re, ref.z_im, ref.num_iters, dc_max_mag_sq,
+                    sa_tolerance, probe_dc_re, probe_dc_im, pixel_spacing,
+                )
+            )
     else:
         sa_skip = 0
         sa_a_re = sa_a_im = sa_b_re = sa_b_im = sa_c_re = sa_c_im = 0.0
 
     # Glitch tolerance: flag when |d_n|^2 > tolerance * |Z_n|^2.
-    # A pixel is "glitched" when the delta grows so large relative to the
-    # reference that floating-point cancellation corrupts the result.
-    # At deep zoom, deltas start tiny (1e-50) so any growth to ~|Z_n| is a
-    # glitch. At moderate zoom, deltas can legitimately be comparable to |Z_n|.
-    # Use 1e-3 at deep zoom; disable (1e300) at moderate zoom.
+    # With proactive rebasing (DZ-P1-03) handling most precision issues inline,
+    # the glitch detector is now a safety net rather than the primary defense.
+    # We use a slower ramp and higher floor to reduce false positives.
+    #
+    # Scale the tolerance with zoom depth:
+    #   zoom 1e13:  tolerance = 1e6   (|d| > 1000*|Z| to trigger)
+    #   zoom 1e33:  tolerance = 1e0   (|d| > |Z|)
+    #   zoom 1e40+: tolerance = 1e-2  (floor, generous with rebasing active)
+    #   zoom < 1e13: disabled
     if zoom >= 1e13:
-        glitch_tolerance = 1e-3
+        log_zoom = math.log10(zoom)
+        # Slower ramp: 6 - 0.3*(log_zoom - 13) → from 1e6 at 1e13 to 1e0 at 1e33
+        exponent = 6.0 - 0.3 * (log_zoom - 13.0)
+        glitch_tolerance = 10.0 ** max(exponent, -2.0)  # floor at 1e-2
     else:
-        # At moderate zoom, perturbation is mathematically equivalent to
-        # direct iteration -- no precision-loss glitches can occur.
         glitch_tolerance = 1e300  # effectively disabled
+
+    # BLA table: pre-compute linear approximation coefficients for iteration skipping.
+    # Only beneficial at very deep zoom where the reference orbit is very long
+    # (10,000+ iterations). At moderate zoom with shorter orbits, BLA introduces
+    # accuracy issues especially for orbits that pass near zero periodically.
+    pixel_spacing = view_height / height
+    bla_table = None
+    if ref.num_iters > 10000:
+        bla_table = compute_bla_table(
+            ref.z_re, ref.z_im, ref.num_iters, pixel_spacing,
+        )
+
+    # DZ-P1-03: Only enable proactive rebasing at deep zoom where deltas are
+    # genuinely tiny. At moderate zoom (1e13-1e17), deltas start at ~1e-13
+    # but grow to O(1) for chaotic orbits. Rebasing folds d=Z+d making d=O(1),
+    # violating the perturbation assumption d << Z. The d^2 term then dominates
+    # and the computation produces garbage (false interior pixels).
+    # At zoom >= 1e18, initial deltas are ~1e-18 and rebasing is essential to
+    # prevent catastrophic cancellation during near-zero orbit passages.
+    enable_rebasing = zoom >= 1e18
 
     # First render pass
     smooth_out, glitch_out = _dispatch_render(
         ref, min_dc_re, min_dc_im, step_dc_re, step_dc_im,
         max_iter, height, width,
         sa_skip, sa_a_re, sa_a_im, sa_b_re, sa_b_im, sa_c_re, sa_c_im,
-        glitch_tolerance, gpu,
+        glitch_tolerance, gpu, bla_table=bla_table,
+        enable_rebasing=enable_rebasing,
     )
 
     # P3-03: Glitch correction passes (up to 3)
@@ -599,20 +717,34 @@ def render_frame_perturbation(
         new_dc_max_mag_sq = new_max_dc_re ** 2 + new_max_dc_im ** 2
 
         if ref2.num_iters > 10:
-            sa2 = _compute_series_approximation(
-                ref2.z_re, ref2.z_im, ref2.num_iters, new_dc_max_mag_sq, sa_tolerance,
-            )
+            if zoom >= 1e13:
+                sa2 = compute_series_approximation_hp(
+                    ref2, new_dc_max_mag_sq, sa_tolerance,
+                )
+            else:
+                sa2 = _compute_series_approximation(
+                    ref2.z_re, ref2.z_im, ref2.num_iters, new_dc_max_mag_sq,
+                    sa_tolerance,
+                )
             sa2_skip, sa2_a_re, sa2_a_im, sa2_b_re, sa2_b_im, sa2_c_re, sa2_c_im = sa2
         else:
             sa2_skip = 0
             sa2_a_re = sa2_a_im = sa2_b_re = sa2_b_im = sa2_c_re = sa2_c_im = 0.0
+
+        # BLA table for new reference
+        bla_table2 = None
+        if ref2.num_iters > 100:
+            bla_table2 = compute_bla_table(
+                ref2.z_re, ref2.z_im, ref2.num_iters, pixel_spacing,
+            )
 
         # Render the correction pass (full frame, then merge only glitched pixels)
         smooth2, glitch2 = _dispatch_render(
             ref2, new_min_dc_re, new_min_dc_im, step_dc_re, step_dc_im,
             max_iter, height, width,
             sa2_skip, sa2_a_re, sa2_a_im, sa2_b_re, sa2_b_im, sa2_c_re, sa2_c_im,
-            glitch_tolerance, gpu,
+            glitch_tolerance, gpu, bla_table=bla_table2,
+            enable_rebasing=enable_rebasing,
         )
 
         # Merge: overwrite only previously glitched pixels
@@ -628,9 +760,30 @@ def _dispatch_render(
     ref, min_dc_re, min_dc_im, step_dc_re, step_dc_im,
     max_iter, height, width,
     sa_skip, sa_a_re, sa_a_im, sa_b_re, sa_b_im, sa_c_re, sa_c_im,
-    glitch_tolerance, gpu,
+    glitch_tolerance, gpu, bla_table=None, enable_rebasing=True,
 ):
-    """Dispatch to GPU or CPU kernel."""
+    """Dispatch to GPU or CPU kernel, using BLA acceleration when available."""
+    if bla_table is not None and bla_table.num_levels > 0:
+        from fractalforge.engine.bla_kernel import render_gpu_bla, render_cpu_bla
+        if gpu:
+            return render_gpu_bla(
+                ref.z_re, ref.z_im, ref.z_mag_sq,
+                ref.num_iters,
+                min_dc_re, min_dc_im, step_dc_re, step_dc_im,
+                max_iter, height, width,
+                sa_skip, sa_a_re, sa_a_im, sa_b_re, sa_b_im, sa_c_re, sa_c_im,
+                bla_table, glitch_tolerance, enable_rebasing,
+            )
+        else:
+            return render_cpu_bla(
+                ref.z_re, ref.z_im, ref.z_mag_sq,
+                ref.num_iters,
+                min_dc_re, min_dc_im, step_dc_re, step_dc_im,
+                max_iter, height, width,
+                sa_skip, sa_a_re, sa_a_im, sa_b_re, sa_b_im, sa_c_re, sa_c_im,
+                bla_table, glitch_tolerance, enable_rebasing,
+            )
+
     if gpu:
         return _render_gpu_perturbation(
             ref.z_re, ref.z_im, ref.z_mag_sq,
@@ -638,7 +791,7 @@ def _dispatch_render(
             min_dc_re, min_dc_im, step_dc_re, step_dc_im,
             max_iter, height, width,
             sa_skip, sa_a_re, sa_a_im, sa_b_re, sa_b_im, sa_c_re, sa_c_im,
-            glitch_tolerance,
+            glitch_tolerance, enable_rebasing,
         )
     else:
         return _perturbation_cpu(
@@ -648,5 +801,5 @@ def _dispatch_render(
             max_iter,
             height, width,
             sa_skip, sa_a_re, sa_a_im, sa_b_re, sa_b_im, sa_c_re, sa_c_im,
-            glitch_tolerance,
+            glitch_tolerance, enable_rebasing,
         )
