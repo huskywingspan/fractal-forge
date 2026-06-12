@@ -27,6 +27,9 @@ def render_sequence(
     supersampling: int = 1,
     on_progress: callable = None,
     histogram: bool = False,
+    slope_shading: bool = False,
+    cycle_speed: float = 0.0,
+    log_scaling: bool = False,
     vignette: float = 0.0,
     contrast: float = 1.0,
     saturation: float = 1.0,
@@ -109,9 +112,12 @@ def render_sequence(
             )
         elif frame_zoom >= _DEEP_ZOOM_THRESHOLD:
             from fractalforge.engine.perturbation import render_frame_perturbation
+            # Use hp strings when available for full precision at deep zoom
+            re_str = params.get("center_re_hp") or str(params["center_re"])
+            im_str = params.get("center_im_hp") or str(params["center_im"])
             smooth_data = render_frame_perturbation(
-                center_re=str(params["center_re"]),
-                center_im=str(params["center_im"]),
+                center_re=re_str,
+                center_im=im_str,
                 zoom=frame_zoom,
                 width=render_w,
                 height=render_h,
@@ -129,7 +135,16 @@ def render_sequence(
                 use_gpu=use_gpu,
             )
 
-        img = smooth_to_image(smooth_data, palette, histogram=histogram)
+        # Color cycling: shift palette offset each frame
+        cycle_offset = frame_idx * cycle_speed if cycle_speed != 0.0 else 0.0
+
+        img = smooth_to_image(
+            smooth_data, palette,
+            histogram=histogram,
+            slope_shading=slope_shading,
+            cycle_offset=cycle_offset,
+            log_scaling=log_scaling,
+        )
 
         # Downsample if supersampled
         if ss > 1:

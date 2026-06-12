@@ -14,7 +14,10 @@ from fractalforge.engine.coloring import smooth_to_image
 from fractalforge.engine.mandelbrot import render_frame
 from fractalforge.artist.palette import get_palette
 
-# Zoom threshold for switching to perturbation theory
+# Zoom threshold for switching to perturbation theory.
+# At 1e13-1e14, float64 has minor grid artifacts but is more reliable
+# than perturbation for chaotic orbits (period >1000). By 1e15, float64
+# is truly unusable and perturbation is essential.
 _DEEP_ZOOM_THRESHOLD = 1e13
 
 
@@ -35,10 +38,22 @@ def render_single(
     use_gpu: bool | None = None,
     supersampling: int = 1,
     histogram: bool = False,
+    slope_shading: bool = False,
+    light_angle: float = 2.356,
+    light_elevation: float = 0.6,
+    cycle_offset: float = 0.0,
+    log_scaling: bool = False,
+    distance_coloring: bool = False,
     vignette: float = 0.0,
     contrast: float = 1.0,
     saturation: float = 1.0,
     brightness: float = 1.0,
+    bloom: float = 0.0,
+    bloom_threshold: float = 0.6,
+    bloom_radius: float = 20.0,
+    halation: float = 0.0,
+    tone_map: str = "none",
+    exposure: float = 1.0,
     fractal_type: str = "mandelbrot",
     julia_re: float | None = None,
     julia_im: float | None = None,
@@ -47,28 +62,6 @@ def render_single(
 
     Automatically selects perturbation theory for deep zooms (>= 1e13).
     Coordinates can be passed as strings to preserve precision at deep zoom.
-
-    Args:
-        center_re: Real part of center coordinate (float or string).
-        center_im: Imaginary part of center coordinate (float or string).
-        zoom: Zoom level.
-        width: Frame width in pixels.
-        height: Frame height in pixels.
-        max_iter: Maximum iterations.
-        palette_name: Name of a built-in palette.
-        interior_color: RGB for interior (non-escaping) points.
-        use_gpu: Force GPU (True), CPU (False), or auto-detect (None).
-        supersampling: Supersampling factor (1=off, 2=4x SSAA, 3=9x).
-            Renders at factor*width x factor*height then downsamples with
-            a box filter, averaging colors to eliminate aliasing noise.
-        histogram: If True, apply histogram equalization for even color distribution.
-        vignette: Vignette strength (0.0=off, 0.5=moderate, 1.0=strong edge darkening).
-        contrast: Contrast multiplier (1.0=unchanged).
-        saturation: Saturation multiplier (1.0=unchanged).
-        brightness: Brightness multiplier (1.0=unchanged).
-
-    Returns:
-        PIL Image (RGB) at the requested width x height.
     """
     palette = get_palette(palette_name)
 
@@ -76,6 +69,7 @@ def render_single(
     ss = max(1, supersampling)
     render_w = width * ss
     render_h = height * ss
+    dist_data = None
 
     if fractal_type == "julia":
         from fractalforge.engine.julia import render_frame_julia
@@ -113,21 +107,44 @@ def render_single(
             use_gpu=use_gpu,
         )
     else:
-        smooth_data = render_frame(
+        use_de = distance_coloring and fractal_type == "mandelbrot"
+        result = render_frame(
             float(center_re), float(center_im), zoom,
-            render_w, render_h, max_iter, use_gpu=use_gpu,
+            render_w, render_h, max_iter, use_gpu=use_gpu, distance=use_de,
         )
+        if use_de:
+            smooth_data, dist_data = result
+        else:
+            smooth_data = result
+            dist_data = None
 
-    img = smooth_to_image(smooth_data, palette, interior_color, histogram=histogram)
+    img = smooth_to_image(
+        smooth_data, palette, interior_color,
+        histogram=histogram,
+        slope_shading=slope_shading,
+        light_angle=light_angle,
+        light_elevation=light_elevation,
+        cycle_offset=cycle_offset,
+        log_scaling=log_scaling,
+        distance_data=dist_data,
+    )
 
     # Downsample if supersampled (box filter = proper area average)
     if ss > 1:
         img = img.resize((width, height), Image.LANCZOS)
 
-    # Post-processing (vignette, color grading)
-    if vignette > 0 or contrast != 1.0 or saturation != 1.0 or brightness != 1.0:
+    # Post-processing (color grading, HDR bloom, halation, tone mapping, vignette)
+    has_postprocess = (vignette > 0 or contrast != 1.0 or saturation != 1.0
+                       or brightness != 1.0 or bloom > 0 or halation > 0
+                       or tone_map != "none")
+    if has_postprocess:
         from fractalforge.engine.postprocess import postprocess
-        img = postprocess(img, vignette, contrast, saturation, brightness)
+        img = postprocess(
+            img, vignette=vignette, contrast=contrast, saturation=saturation,
+            brightness=brightness, bloom=bloom, bloom_threshold=bloom_threshold,
+            bloom_radius=bloom_radius, halation=halation, tone_map=tone_map,
+            exposure=exposure,
+        )
 
     return img
 
@@ -145,25 +162,27 @@ def render_and_save(
     use_gpu: bool | None = None,
     supersampling: int = 1,
     histogram: bool = False,
+    slope_shading: bool = False,
+    light_angle: float = 2.356,
+    light_elevation: float = 0.6,
+    cycle_offset: float = 0.0,
+    log_scaling: bool = False,
+    distance_coloring: bool = False,
     vignette: float = 0.0,
     contrast: float = 1.0,
     saturation: float = 1.0,
     brightness: float = 1.0,
+    bloom: float = 0.0,
+    bloom_threshold: float = 0.6,
+    bloom_radius: float = 20.0,
+    halation: float = 0.0,
+    tone_map: str = "none",
+    exposure: float = 1.0,
     fractal_type: str = "mandelbrot",
     julia_re: float | None = None,
     julia_im: float | None = None,
 ) -> Path:
-    """Render a single frame and save to disk.
-
-    Args:
-        output_path: Path to save the image file.
-        center_re: Real part of center (float or string for deep zoom).
-        center_im: Imaginary part of center (float or string for deep zoom).
-        Other args: See render_single().
-
-    Returns:
-        The output path.
-    """
+    """Render a single frame and save to disk. See render_single() for args."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -179,10 +198,22 @@ def render_and_save(
         use_gpu=use_gpu,
         supersampling=supersampling,
         histogram=histogram,
+        slope_shading=slope_shading,
+        light_angle=light_angle,
+        light_elevation=light_elevation,
+        cycle_offset=cycle_offset,
+        log_scaling=log_scaling,
+        distance_coloring=distance_coloring,
         vignette=vignette,
         contrast=contrast,
         saturation=saturation,
         brightness=brightness,
+        bloom=bloom,
+        bloom_threshold=bloom_threshold,
+        bloom_radius=bloom_radius,
+        halation=halation,
+        tone_map=tone_map,
+        exposure=exposure,
         fractal_type=fractal_type,
         julia_re=julia_re,
         julia_im=julia_im,

@@ -10,6 +10,9 @@ Usage:
     fractalforge title TITLE         Generate a title card overlay (Phase 4)
     fractalforge thumbnail PATH      Generate thumbnail candidates (Phase 4)
     fractalforge short PATH          Generate a YouTube Short (Phase 4)
+    fractalforge viewer              Launch interactive fractal explorer
+    fractalforge discover [OPTIONS]  Find deep zoom boundary coordinates
+    fractalforge scan-region [OPTS]  Scan a region for interesting nuclei
 """
 
 import time
@@ -61,6 +64,14 @@ def cli():
 )
 @click.option("--julia-re", default=None, type=float, help="Julia c parameter (real part).")
 @click.option("--julia-im", default=None, type=float, help="Julia c parameter (imaginary part).")
+@click.option("--bloom", default=0.0, type=click.FloatRange(0.0, 2.0), help="HDR bloom intensity (0=off, 0.3=subtle, 1.0=heavy glow).")
+@click.option("--halation", default=0.0, type=click.FloatRange(0.0, 1.0), help="Film halation intensity (warm light bleed, 0=off, 0.15=subtle).")
+@click.option(
+    "--tone-map", default="none",
+    type=click.Choice(["none", "aces", "reinhard"], case_sensitive=False),
+    help="HDR tone mapping curve (none, aces=filmic, reinhard=soft).",
+)
+@click.option("--exposure", default=1.0, type=float, help="Exposure multiplier for tone mapping (1.0=unchanged).")
 @click.option(
     "--output", "-o", default="output/frame.png", type=click.Path(), help="Output file path."
 )
@@ -83,6 +94,10 @@ def render(
     fractal: str,
     julia_re: float | None,
     julia_im: float | None,
+    bloom: float,
+    halation: float,
+    tone_map: str,
+    exposure: float,
     output: str,
 ):
     """Render a single Mandelbrot frame to PNG.
@@ -144,6 +159,12 @@ def render(
         console.print(f"  Vignette:  {vignette:.1f}")
     if contrast != 1.0 or saturation != 1.0 or brightness != 1.0:
         console.print(f"  Grade:     contrast={contrast:.2f} sat={saturation:.2f} bright={brightness:.2f}")
+    if bloom > 0:
+        console.print(f"  Bloom:     {bloom:.2f}")
+    if halation > 0:
+        console.print(f"  Halation:  {halation:.2f}")
+    if tone_map != "none":
+        console.print(f"  Tone map:  {tone_map} (exposure={exposure:.1f})")
     console.print(f"  Backend:   {backend}")
     console.print(f"  Engine:    {engine}")
     console.print(f"  Output:    {output}")
@@ -167,6 +188,10 @@ def render(
         contrast=contrast,
         saturation=saturation,
         brightness=brightness,
+        bloom=bloom,
+        halation=halation,
+        tone_map=tone_map,
+        exposure=exposure,
         fractal_type=fractal,
         julia_re=julia_re,
         julia_im=julia_im,
@@ -706,6 +731,25 @@ def camera_path(path: str, output: str | None, compare: bool, mode: str | None):
     console.print(f"[green]Done:[/] Camera path preview saved to {out}")
 
 
+@cli.command()
+def viewer():
+    """Launch the interactive fractal explorer.
+
+    Opens a Dear PyGui window with real-time fractal rendering, parameter
+    controls, click-to-zoom navigation, and coordinate bookmarking.
+
+    Requires: pip install dearpygui
+    """
+    from fractalforge.viewer import launch_viewer
+
+    console.print(f"[bold cyan]FractalForge[/] v{__version__} -- Interactive Viewer")
+    console.print("  Left-click:   re-center + zoom in")
+    console.print("  Scroll:       zoom toward cursor")
+    console.print("  Right-drag:   pan viewport")
+    console.print()
+    launch_viewer()
+
+
 @cli.command(name="compile")
 @click.argument("spec_path", type=click.Path(exists=True))
 @click.option("--output", "-o", default=None, type=click.Path(), help="Output video file.")
@@ -754,6 +798,230 @@ def compile_cmd(spec_path: str, output: str | None):
     file_size = video_path.stat().st_size
     size_str = f"{file_size / 1_048_576:.1f} MB" if file_size >= 1_048_576 else f"{file_size / 1024:.0f} KB"
     console.print(f"\n[green]Done:[/] {video_path} ({size_str})")
+
+
+@cli.command()
+@click.option("--center-re", "-x", default="-0.75", type=str,
+              help="Approximate real coordinate near target.")
+@click.option("--center-im", "-y", default="0.1", type=str,
+              help="Approximate imaginary coordinate near target.")
+@click.option("--precision", "-p", default=100, type=int,
+              help="Decimal digits for output coordinates (default 100).")
+@click.option("--max-period", default=10000, type=int,
+              help="Maximum period to detect (default 10000).")
+@click.option("--angles", "-a", default=None, type=str,
+              help="Comma-separated internal angles (default: 0,0.5,1/3,2/3,1/4,3/4,1/5,2/5).")
+@click.option("--render-test", is_flag=True, default=False,
+              help="Render a quick preview of each discovered coordinate.")
+@click.option("--output", "-o", default=None, type=click.Path(),
+              help="Save results to JSON file.")
+def discover(center_re: str, center_im: str, precision: int, max_period: int,
+             angles: str | None, render_test: bool, output: str | None):
+    """Discover high-precision boundary coordinates for deep zoom videos.
+
+    Uses Newton-Raphson to find the exact nucleus of the nearest hyperbolic
+    component, then locates boundary points at various internal angles.
+    These are ideal targets for deep zoom rendering -- they sit precisely
+    on the Mandelbrot set boundary where fractal detail is densest.
+
+    Examples:
+      fractalforge discover -x "-0.75" -y "0.1"
+      fractalforge discover -x "-1.768778833" -y "-0.001738996" -p 200
+      fractalforge discover -x "-0.75" -y "0.1" --render-test
+    """
+    import json
+    from fractalforge.engine.newton import discover_coordinates, detect_period
+
+    console.print(f"[bold cyan]FractalForge[/] v{__version__} -- Coordinate Discovery")
+    console.print(f"  Approximate: ({center_re}, {center_im})")
+    console.print(f"  Precision:   {precision} digits")
+    console.print(f"  Max period:  {max_period}")
+    console.print()
+
+    # Parse angles
+    parsed_angles = None
+    if angles:
+        parsed_angles = []
+        for a in angles.split(","):
+            a = a.strip()
+            if "/" in a:
+                num, den = a.split("/")
+                parsed_angles.append(int(num) / int(den))
+            else:
+                parsed_angles.append(float(a))
+
+    results = discover_coordinates(
+        c_re_str=center_re,
+        c_im_str=center_im,
+        precision=precision,
+        angles=parsed_angles,
+        max_period=max_period,
+        verbose=True,
+    )
+
+    if not results:
+        console.print("[yellow]No boundary points found.[/]")
+        return
+
+    # Display results table
+    console.print()
+    table = Table(title="Discovered Boundary Points")
+    table.add_column("Angle", style="cyan")
+    table.add_column("Real", style="white", max_width=60)
+    table.add_column("Imaginary", style="white", max_width=60)
+    table.add_column("Zoom", style="yellow")
+    table.add_column("Status", style="green")
+
+    for bp in results:
+        from fractalforge.engine.newton import _format_angle
+        table.add_row(
+            _format_angle(bp.internal_angle),
+            bp.c_re[:50] + ("..." if len(bp.c_re) > 50 else ""),
+            bp.c_im[:50] + ("..." if len(bp.c_im) > 50 else ""),
+            f"{bp.suggested_zoom:.1e}",
+            "OK" if bp.converged else "FAILED",
+        )
+    console.print(table)
+
+    # Save to JSON
+    if output:
+        out_path = Path(output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "source": {"center_re": center_re, "center_im": center_im},
+            "precision": precision,
+            "points": [
+                {
+                    "c_re": bp.c_re,
+                    "c_im": bp.c_im,
+                    "period": bp.period,
+                    "internal_angle": bp.internal_angle,
+                    "suggested_zoom": bp.suggested_zoom,
+                    "converged": bp.converged,
+                }
+                for bp in results
+            ],
+        }
+        out_path.write_text(json.dumps(data, indent=2))
+        console.print(f"\n[green]Saved:[/] {out_path}")
+
+    # Render test previews
+    if render_test:
+        console.print("\n[bold]Rendering test previews...[/]")
+        from fractalforge.engine.perturbation import render_frame_perturbation
+        from fractalforge.engine.coloring import smooth_to_image
+        from fractalforge.artist.palette import get_palette
+        import math
+
+        palette = get_palette("deep_blue")
+        test_dir = Path("output/discover_previews")
+        test_dir.mkdir(parents=True, exist_ok=True)
+
+        for i, bp in enumerate(results[:4]):  # Render top 4
+            if not bp.converged:
+                continue
+            zoom_level = min(bp.suggested_zoom, 1e30)
+            max_iter = max(2000, int(500 + 300 * math.log10(zoom_level)))
+            console.print(f"  [{i+1}] angle={_format_angle(bp.internal_angle)} "
+                          f"zoom={zoom_level:.1e} iter={max_iter}")
+
+            t0 = time.perf_counter()
+            smooth = render_frame_perturbation(
+                center_re=bp.c_re,
+                center_im=bp.c_im,
+                zoom=zoom_level,
+                width=640, height=360,
+                max_iter=max_iter,
+            )
+            elapsed = time.perf_counter() - t0
+
+            img = smooth_to_image(smooth, palette, histogram=True, slope_shading=True)
+            fname = test_dir / f"discover_{i:02d}_angle{bp.internal_angle:.3f}.png"
+            img.save(str(fname))
+            console.print(f"      {elapsed:.1f}s -> {fname}")
+
+        console.print(f"\n[green]Done:[/] Previews saved to {test_dir}")
+
+    # Print CLI-ready commands for the best result
+    best = next((bp for bp in results if bp.converged), None)
+    if best:
+        console.print("\n[bold]Quick render command:[/]")
+        zoom_cmd = min(best.suggested_zoom, 1e20)
+        console.print(f'  fractalforge render -x "{best.c_re}" '
+                      f'-y "{best.c_im}" -z {zoom_cmd:.0e} '
+                      f'-i 5000 --histogram -o output/discover_test.png')
+
+
+@cli.command(name="scan-region")
+@click.option("--re-min", default=-2.0, type=float, help="Real min (default -2.0).")
+@click.option("--re-max", default=0.5, type=float, help="Real max (default 0.5).")
+@click.option("--im-min", default=-1.25, type=float, help="Imaginary min (default -1.25).")
+@click.option("--im-max", default=1.25, type=float, help="Imaginary max (default 1.25).")
+@click.option("--grid", "-g", default=20, type=int, help="Grid resolution per axis (default 20).")
+@click.option("--max-period", default=500, type=int, help="Max period to detect (default 500).")
+@click.option("--precision", "-p", default=50, type=int, help="Precision digits (default 50).")
+@click.option("--output", "-o", default=None, type=click.Path(), help="Save results to JSON.")
+def scan_region_cmd(re_min: float, re_max: float, im_min: float, im_max: float,
+                    grid: int, max_period: int, precision: int, output: str | None):
+    """Scan a region for hyperbolic component nuclei.
+
+    Useful for finding interesting zoom targets in an area.
+
+    Example:
+      fractalforge scan-region --re-min -0.8 --re-max -0.7 --im-min 0.1 --im-max 0.2
+    """
+    import json
+    from fractalforge.engine.newton import scan_region
+
+    console.print(f"[bold cyan]FractalForge[/] v{__version__} -- Region Scanner")
+    console.print(f"  Region:    [{re_min}, {re_max}] x [{im_min}, {im_max}]")
+    console.print(f"  Grid:      {grid}x{grid} = {grid*grid} sample points")
+    console.print(f"  Max period: {max_period}")
+    console.print()
+
+    nuclei = scan_region(
+        re_min=re_min, re_max=re_max,
+        im_min=im_min, im_max=im_max,
+        grid_size=grid, max_period=max_period,
+        precision=precision, verbose=True,
+    )
+
+    if nuclei:
+        console.print()
+        table = Table(title="Discovered Nuclei")
+        table.add_column("Period", style="cyan", justify="right")
+        table.add_column("Real", style="white", max_width=40)
+        table.add_column("Imaginary", style="white", max_width=40)
+        table.add_column("Size", style="yellow")
+        table.add_column("Status", style="green")
+
+        for nuc in nuclei:
+            table.add_row(
+                str(nuc.period),
+                nuc.c_re[:35] + ("..." if len(nuc.c_re) > 35 else ""),
+                nuc.c_im[:35] + ("..." if len(nuc.c_im) > 35 else ""),
+                f"{nuc.size:.3e}",
+                "OK" if nuc.converged else "FAIL",
+            )
+        console.print(table)
+
+    if output and nuclei:
+        out_path = Path(output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "region": {"re_min": re_min, "re_max": re_max,
+                        "im_min": im_min, "im_max": im_max},
+            "nuclei": [
+                {
+                    "c_re": n.c_re, "c_im": n.c_im,
+                    "period": n.period, "size": n.size,
+                    "converged": n.converged,
+                }
+                for n in nuclei
+            ],
+        }
+        out_path.write_text(json.dumps(data, indent=2))
+        console.print(f"\n[green]Saved:[/] {out_path}")
 
 
 if __name__ == "__main__":

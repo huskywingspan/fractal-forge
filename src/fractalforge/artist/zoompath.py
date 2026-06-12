@@ -34,6 +34,9 @@ class Keyframe:
     julia_im: float | None = None
     easing: str = "ease_in_out"  # Easing for transition INTO this keyframe
     tension: float = 0.5  # Spline tension (0=sharp corner, 1=maximum smoothing)
+    # High-precision coordinate strings for deep zoom (zoom >= 1e13)
+    center_re_hp: str | None = None
+    center_im_hp: str | None = None
 
 
 @dataclass
@@ -77,7 +80,7 @@ class ZoomPath:
 
     def _keyframe_result(self, kf: "Keyframe") -> dict:
         """Build result dict from a single keyframe."""
-        return {
+        result = {
             "center_re": kf.center_re,
             "center_im": kf.center_im,
             "zoom": kf.zoom,
@@ -87,9 +90,19 @@ class ZoomPath:
             "julia_re": kf.julia_re,
             "julia_im": kf.julia_im,
         }
+        if kf.center_re_hp is not None:
+            result["center_re_hp"] = kf.center_re_hp
+        if kf.center_im_hp is not None:
+            result["center_im_hp"] = kf.center_im_hp
+        return result
 
     def _interpolate_legacy(self, frame: int) -> dict:
-        """Original piecewise zoom-weighted interpolation."""
+        """Original piecewise zoom-weighted interpolation.
+
+        For deep zoom (target zoom >= 1e13), uses mpmath for coordinate math
+        to preserve precision. The hp string coordinates are passed through
+        so the renderer can use them for perturbation theory.
+        """
         if not self.keyframes:
             raise ValueError("No keyframes defined")
 
@@ -110,9 +123,20 @@ class ZoomPath:
                 log_zoom1 = math.log(kf1.zoom)
                 zoom = math.exp(log_zoom0 + t * (log_zoom1 - log_zoom0))
 
-                zoom_ratio = kf0.zoom / zoom
-                center_re = kf1.center_re + (kf0.center_re - kf1.center_re) * zoom_ratio
-                center_im = kf1.center_im + (kf0.center_im - kf1.center_im) * zoom_ratio
+                # Use mpmath for coordinate interpolation at deep zoom
+                # to prevent float64 precision loss
+                target_has_hp = (kf1.center_re_hp is not None
+                                 and kf1.center_im_hp is not None)
+                if zoom >= 1e13 and target_has_hp:
+                    center_re, center_im, hp_re, hp_im = (
+                        self._interp_coords_hp(kf0, kf1, zoom)
+                    )
+                else:
+                    zoom_ratio = kf0.zoom / zoom
+                    center_re = kf1.center_re + (kf0.center_re - kf1.center_re) * zoom_ratio
+                    center_im = kf1.center_im + (kf0.center_im - kf1.center_im) * zoom_ratio
+                    hp_re = None
+                    hp_im = None
 
                 max_iter = int(kf0.max_iter + t * (kf1.max_iter - kf0.max_iter))
                 palette = kf0.palette if t < 0.5 else kf1.palette
@@ -125,7 +149,7 @@ class ZoomPath:
                     julia_re = kf0.julia_re + t * (kf1.julia_re - kf0.julia_re)
                     julia_im = kf0.julia_im + t * (kf1.julia_im - kf0.julia_im)
 
-                return {
+                result = {
                     "center_re": center_re,
                     "center_im": center_im,
                     "zoom": zoom,
@@ -135,8 +159,39 @@ class ZoomPath:
                     "julia_re": julia_re,
                     "julia_im": julia_im,
                 }
+                if hp_re is not None:
+                    result["center_re_hp"] = hp_re
+                    result["center_im_hp"] = hp_im
+                return result
 
         raise ValueError(f"Frame {frame} not in keyframe range")
+
+    @staticmethod
+    def _interp_coords_hp(kf0, kf1, zoom):
+        """Interpolate coordinates using mpmath for deep zoom precision.
+
+        The zoom-weighted formula: pos = target + (start - target) * (start_zoom / zoom)
+        At deep zoom, (start - target) is large and zoom is huge, so the offset
+        shrinks to sub-float64 scale. mpmath keeps the needed precision.
+        """
+        import mpmath
+        # Use enough precision for the target zoom
+        digits = max(20, int(math.log10(zoom)) + 20)
+        mpmath.mp.dps = digits
+
+        # Use hp strings when available, fall back to float
+        re0 = mpmath.mpf(kf0.center_re_hp or str(kf0.center_re))
+        im0 = mpmath.mpf(kf0.center_im_hp or str(kf0.center_im))
+        re1 = mpmath.mpf(kf1.center_re_hp)
+        im1 = mpmath.mpf(kf1.center_im_hp)
+
+        zoom_ratio = mpmath.mpf(kf0.zoom) / mpmath.mpf(zoom)
+        center_re_mp = re1 + (re0 - re1) * zoom_ratio
+        center_im_mp = im1 + (im0 - im1) * zoom_ratio
+
+        hp_re = mpmath.nstr(center_re_mp, digits, strip_zeros=False)
+        hp_im = mpmath.nstr(center_im_mp, digits, strip_zeros=False)
+        return float(center_re_mp), float(center_im_mp), hp_re, hp_im
 
     def _interpolate_cinematic(self, frame: int) -> dict:
         """Cinematic interpolation with spline position and eased zoom.
@@ -243,6 +298,8 @@ class ZoomPath:
             "julia_im": None,
             "easing": "ease_in_out",
             "tension": 0.5,
+            "center_re_hp": None,
+            "center_im_hp": None,
         }
 
         data = {
@@ -265,6 +322,8 @@ class ZoomPath:
                         "julia_im": kf.julia_im,
                         "easing": kf.easing,
                         "tension": kf.tension,
+                        "center_re_hp": kf.center_re_hp,
+                        "center_im_hp": kf.center_im_hp,
                     }.items()
                     if k in REQUIRED or (v is not None and v != DEFAULTS.get(k))
                 }
