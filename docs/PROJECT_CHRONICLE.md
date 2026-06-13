@@ -4,7 +4,7 @@
 >
 > **For Copilot Agents:** Reference this document when working on FractalForge to avoid repeating past mistakes and understand why things are built the way they are.
 >
-> **Version:** 4.0 (March 9, 2026) -- alpha1.1.0: Julia sets, Burning Ship fractal, compilation pipeline with crossfade transitions.
+> **Version:** 5.0 (June 13, 2026) -- DZ-P2: floatexp deep-zoom engine (unbounded magnification to 1e600+), Misiurewicz target finder, and a fully overhauled premium interactive viewer.
 
 ---
 
@@ -444,3 +444,116 @@ Unlike Mandelbrot, where the main cardioid boundary is well-known, Julia set bou
 3. **Background thread**: Renders frames via `render_sequence()` with cancel support. Encodes to video via FFmpeg on completion.
 4. **HP coordinate interpolation** (`zoompath.py`): New `_interp_coords_hp()` uses mpmath for zoom-weighted position interpolation when target zoom >= 1e13. Keyframe dataclass extended with `center_re_hp`/`center_im_hp` fields.
 5. **Sequence renderer** (`render/sequence.py`): Updated to pass hp string coordinates to `render_frame_perturbation()` when available.
+
+---
+
+### AD-014: Floatexp Deep-Zoom Engine (DZ-P2)
+
+**Date:** 2026-06-13
+**Decision:** Add an extended-range ("floatexp") perturbation engine and route
+all zooms `>= 1e18` to it, lifting the practical zoom ceiling from ~1e15 to
+1e600+ (effectively unbounded).
+
+**Problem:** The float64 perturbation kernels (DZ-P1) break down past ~1e18:
+
+- Float64 deltas underflow near 1e-308; products like `2*Z*d` die even earlier.
+- DZ-P1's proactive rebasing folds the delta to O(1) when `|Z+d| < |d|`, but at
+  that point the per-pixel `dc` (~10^-zoom) is far below the float64 mantissa and
+  is silently dropped. Pixels lose their identity, producing **false-interior
+  blocks** — worst for bounded (Misiurewicz / dendrite) references whose orbits
+  skirt the origin. Empirically, interior% for the `c=i` dendrite jumped from 0%
+  to 12-70% exactly at the `zoom >= 1e18` rebasing gate.
+
+**Architecture:**
+
+1. **`engine/floatexp.py`** — a complex value is `(m_re, m_im, exp)`: two float64
+   mantissas sharing one int64 power-of-two exponent, normalized so
+   `max(|m_re|,|m_im|)` is in `[0.5, 1)`. Keeps float64's ~16-digit mantissa
+   while extending range to the int64 exponent. The same primitive bodies are
+   compiled twice via a factory: `fx_*` (`@njit`, CPU) and `dfx_*`
+   (`@cuda.jit(device=True)`, GPU). Magnitude compares use the log2 domain so
+   validity radii far below 1e-308 stay representable.
+2. **`engine/precision.py`** — optional extended (floatexp) reference-orbit
+   storage; `zoom` accepted as a string / `log10` so depth isn't capped at
+   float64's 1e308 (`zoom_to_log10`, `log10_to_zoom_str`).
+3. **`engine/bla.py`** — research-validated BLA validity radii that account for
+   the `dc` divergence term (the old `epsilon/|A|` heuristic tears BLA apart past
+   ~1e50), plus a vectorized floatexp BLA table (`compute_bla_table_fxp`) with
+   sub-16-iteration culling.
+4. **`engine/deep_kernel.py`** — floatexp perturbation kernel (CUDA + CPU) with
+   floatexp BLA jumps and always-on proactive rebasing. No series approximation
+   (BLA from iteration 0 subsumes it at depth). Reference-orbit exhaustion is
+   handled by rebasing to index 0, not by a float64 fallback.
+5. **`engine/perturbation.py`** — `render_frame_perturbation()` routes
+   `zoom >= 1e18` to `_render_deep_fxp()`. Below that the float64 PT path runs
+   without rebasing (correct in that regime).
+
+**Validation:** floatexp arithmetic matches mpmath including a full delta step at
+1e-700 scale; the deep kernel reproduces ground-truth float64 Mandelbrot
+structure at shallow depth (99.9% pixel agreement); the `c=i` embedded-Julia
+escape depth scales linearly with `log(zoom)` from 1e18 to 1e600 with no NaN; the
+float64→fxp handoff at 1e18 is seamless. Visual renders at 1e100/1e200/1e300 show
+coherent self-similar structure.
+
+**Key insight (LL-005):** Proactive rebasing and float64 are fundamentally
+incompatible at depth. Rebasing deliberately makes the delta O(1), which is
+exactly when the tiny per-pixel `dc` underflows float64. Extended-range
+arithmetic for the delta state isn't an optimization here — it's a correctness
+requirement. Hand off to floatexp *at the rebasing threshold*, not later.
+
+---
+
+### AD-015: Misiurewicz Points as Deep-Zoom Targets
+
+**Date:** 2026-06-13
+**Decision:** Add `find_misiurewicz()` (`engine/newton.py`) as the primary tool
+for discovering *tractable* extreme-zoom coordinates, exposed in both the CLI and
+the viewer.
+
+**Problem:** The existing `find_deep_target()` descends a period-doubling cascade,
+but component period grows as `2^depth` while zoom grows only as `delta^depth`
+(delta = 4.669). Reaching 1e120 would need period ~1e54 — an intractable
+reference orbit. It stalls around 1e4 in practice.
+
+**Solution:** Misiurewicz (pre-periodic) points. The critical orbit settles onto
+a repelling cycle after a short transient, so `g(c) = f^{m+p}(0) - f^{m}(0) = 0`
+(Newton) locks onto a point whose reference orbit stays *short at any depth*,
+while the embedded Julia set (Tan Lei) repeats at every scale. Zoom depth is then
+limited only by coordinate precision — perfect for the floatexp engine.
+`find_misiurewicz()` auto-searches small `(preperiod, period)` pairs from a seed.
+Example: seeding near the seahorse spiral yields M(22,1) at
+`-0.77467...+0.13743...i`, which renders a clean self-similar spiral at 1e200.
+
+**Lesson (LL-006):** For deep zoom, target points whose *reference orbit length*
+stays bounded (Misiurewicz / boundary points that don't escape), not minibrot
+nuclei whose period — and hence orbit length — explodes with depth.
+
+---
+
+### AD-016: Interactive Viewer Overhaul
+
+**Date:** 2026-06-13
+**Decision:** Rework the Dear PyGui viewer for unbounded depth, correct
+navigation, and a premium feel.
+
+**Changes:**
+
+1. **`log10_zoom` is the authoritative scale** (`viewer/state.py`). A raw float
+   zoom overflows at 1e308; `log10(1e500)` is just `500.0`. `zoom_str` feeds the
+   string-zoom render path; `zoom` remains a (clamped) convenience float.
+2. **Pan bug fix** (`viewer/canvas.py`). DPG reports drag delta as *cumulative*
+   pixels since button-down. The old code re-applied that growing delta to the
+   already-moved center every frame, causing runaway acceleration. Fix: snapshot
+   the press-time center once and offset from it.
+3. **Keyboard navigation**, **mpmath zoom-to-cursor at any depth**, uncapped
+   go-to / discovery (was clamped to 1e20).
+4. **Progressive rendering** (`viewer/app.py`): a fast reduced-scale pass on
+   every change, replaced by a full-resolution pass after ~0.18 s of stillness.
+   Keeps deep zooms responsive during exploration.
+5. **Premium theme** (`viewer/theme.py`): Infinite Descent palette (navy/cyan/
+   violet), unified collapsing sidebar, and a status bar showing zoom (10^x),
+   engine badge (STD/PT/FXP), iterations, precision digits, and render time.
+
+**Known follow-up:** the in-viewer *video* path still uses float zoom (capped at
+~1e307). Deep-zoom *stills* are unbounded; deep-zoom *video* beyond 1e307 needs
+string-zoom plumbing through `zoompath.py` / `sequence.py` (DZ-P3).

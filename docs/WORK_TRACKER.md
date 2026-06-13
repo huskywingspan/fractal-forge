@@ -137,6 +137,39 @@
 | DZ-07 | Video render panel in viewer | ✅ Done | Resolution, duration, FPS, preset, SSAA, progress |
 | DZ-08 | Viewer video render integration | ✅ Done | Background thread, cancel, auto zoom path generation |
 
+## Sprint DZ-P2: Floatexp Deep-Zoom Engine & Viewer Overhaul
+
+*Goal: Unbounded magnification (1e600+) and a premium, intuitive explorer.*
+
+| ID | Item | Status | Notes |
+|----|------|--------|-------|
+| DZ-P2-01 | floatexp extended-range arithmetic (`engine/floatexp.py`) | ✅ Done | mantissa pair + int64 exp; CPU njit + CUDA device fns; 16 unit tests vs mpmath |
+| DZ-P2-02 | Extended reference orbit + string/log10 zoom | ✅ Done | `precision.py`: floatexp orbit storage, `zoom_to_log10` |
+| DZ-P2-03 | Corrected BLA validity radii + floatexp BLA table | ✅ Done | research formula w/ dc term; `compute_bla_table_fxp`, culling |
+| DZ-P2-04 | Floatexp deep kernel (CUDA + CPU) | ✅ Done | `deep_kernel.py`; BLA jumps + always-on rebasing, no SA |
+| DZ-P2-05 | Route zoom >= 1e18 to deep kernel | ✅ Done | Fixes float64 rebasing false-interior bug at depth |
+| DZ-P2-06 | String-zoom through frame renderer | ✅ Done | `render_single`/`render_and_save` accept str zoom |
+| DZ-P2-07 | Misiurewicz deep-target finder | ✅ Done | `find_misiurewicz()`; tractable orbit at any depth |
+| DZ-P2-08 | Deep-zoom verification suite | ✅ Done | 99.9% vs ground truth, coherent structure to 1e600, no NaN |
+| DZ-P2-09 | Viewer: log10 unbounded zoom | ✅ Done | `state.py` log10_zoom authoritative |
+| DZ-P2-10 | Viewer: fix runaway pan | ✅ Done | snapshot press-time center vs cumulative delta |
+| DZ-P2-11 | Viewer: keyboard nav + zoom-to-cursor | ✅ Done | arrows/+/-/R/B; mpmath at any depth |
+| DZ-P2-12 | Viewer: progressive rendering | ✅ Done | reduced-scale during interaction, full-res on idle |
+| DZ-P2-13 | Viewer: premium theme + status bar | ✅ Done | `theme.py` brand palette; engine/precision/time HUD |
+| DZ-P2-14 | Viewer: in-app Misiurewicz finder | ✅ Done | "Misiurewicz" button -> dive to target |
+| DZ-P2-15 | CLI: `misiurewicz` command | ✅ Done | Find pre-periodic deep targets from the CLI |
+
+## Sprint DZ-P3 (Planned): Deep-Zoom Video
+
+*Goal: Render zoom animations beyond 1e307 (string-zoom through the video pipeline).*
+
+| ID | Item | Status | Notes |
+|----|------|--------|-------|
+| DZ-P3-01 | String/log10 zoom in `Keyframe`/`ZoomPath` | 🔲 Todo | Currently float, caps at ~1e307 |
+| DZ-P3-02 | mpmath exponential zoom interpolation past 1e307 | 🔲 Todo | per-frame zoom as log10 |
+| DZ-P3-03 | Viewer video panel: unbounded target zoom | 🔲 Todo | remove float cap |
+| DZ-P3-04 | Distance-estimation coloring for deep frames | 🔲 Todo | reduce histogram banding at depth |
+
 ## Phase 5: Production & Scaling
 
 *Goal: RunPod integration, 4K renders, production workflow.*

@@ -1024,5 +1024,91 @@ def scan_region_cmd(re_min: float, re_max: float, im_min: float, im_max: float,
         console.print(f"\n[green]Saved:[/] {out_path}")
 
 
+@cli.command()
+@click.option("--center-re", "-x", default="-0.77568377", type=str,
+              help="Approximate real coordinate near a spiral/dendrite.")
+@click.option("--center-im", "-y", default="0.13646737", type=str,
+              help="Approximate imaginary coordinate near a spiral/dendrite.")
+@click.option("--precision", "-p", default=320, type=int,
+              help="Decimal digits for the output coordinate (default 320).")
+@click.option("--preperiod", default=None, type=int,
+              help="Force a specific pre-period (auto-searched if omitted).")
+@click.option("--period", default=None, type=int,
+              help="Force a specific cycle period (auto-searched if omitted).")
+@click.option("--zoom", "-z", default="1e60", type=str,
+              help="Zoom for the test preview (default 1e60).")
+@click.option("--render-test", is_flag=True, default=False,
+              help="Render a quick preview at the found point.")
+@click.option("--output", "-o", default=None, type=click.Path(),
+              help="Save the coordinate to a JSON file.")
+def misiurewicz(center_re: str, center_im: str, precision: int,
+                preperiod: int | None, period: int | None, zoom: str,
+                render_test: bool, output: str | None):
+    """Find a Misiurewicz (pre-periodic) point for tractable extreme zoom.
+
+    Unlike minibrot nuclei -- whose period, and thus reference-orbit length,
+    explodes with depth -- a Misiurewicz point keeps a short reference orbit at
+    ANY zoom while its embedded Julia structure repeats at every scale. These
+    are the best targets for 1e100+ deep zooms.
+
+    Examples:
+      fractalforge misiurewicz -x "-0.77568377" -y "0.13646737"
+      fractalforge misiurewicz -x "-0.1" -y "0.95" -p 500 --render-test -z 1e120
+    """
+    import json
+    from fractalforge.engine.newton import find_misiurewicz
+
+    console.print(f"[bold cyan]FractalForge[/] v{__version__} -- Misiurewicz Finder")
+    console.print(f"  Seed:      ({center_re}, {center_im})")
+    console.print(f"  Precision: {precision} digits")
+    console.print()
+
+    mp = find_misiurewicz(
+        center_re, center_im, preperiod=preperiod, period=period,
+        precision=precision, verbose=True,
+    )
+    if mp is None:
+        console.print("[yellow]No Misiurewicz point found near the seed.[/]")
+        console.print("Try a coordinate nearer a visible spiral or dendrite tip.")
+        return
+
+    console.print()
+    table = Table(title="Misiurewicz Point")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value", style="white")
+    table.add_row("Pre-period", str(mp.preperiod))
+    table.add_row("Period", str(mp.period))
+    table.add_row("Real", mp.c_re[:60] + ("..." if len(mp.c_re) > 60 else ""))
+    table.add_row("Imag", mp.c_im[:60] + ("..." if len(mp.c_im) > 60 else ""))
+    console.print(table)
+
+    if output:
+        out_path = Path(output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps({
+            "c_re": mp.c_re, "c_im": mp.c_im,
+            "preperiod": mp.preperiod, "period": mp.period,
+            "precision": mp.precision,
+        }, indent=2))
+        console.print(f"\n[green]Saved:[/] {out_path}")
+
+    if render_test:
+        from fractalforge.render.frame_renderer import render_and_save
+        console.print(f"\n[bold]Rendering preview at zoom {zoom}...[/]")
+        t0 = time.perf_counter()
+        out = render_and_save(
+            output_path=Path("output/misiurewicz_test.png"),
+            center_re=mp.c_re, center_im=mp.c_im, zoom=zoom,
+            width=960, height=540, max_iter=8000,
+            palette_name="nebula", histogram=True,
+        )
+        console.print(f"  {time.perf_counter() - t0:.1f}s -> {out}")
+
+    console.print("\n[bold]Quick render command:[/]")
+    console.print(f'  fractalforge render -x "{mp.c_re}" '
+                  f'-y "{mp.c_im}" -z {zoom} -i 8000 --histogram '
+                  f'-o output/misiurewicz.png')
+
+
 if __name__ == "__main__":
     cli()
