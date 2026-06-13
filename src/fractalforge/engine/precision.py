@@ -13,11 +13,14 @@ Reference orbit pipeline:
   4. Track escape iteration and |Z_n|^2 for glitch detection
 """
 
+import math
 import time
 from dataclasses import dataclass
 
 import mpmath
 import numpy as np
+
+from fractalforge.engine.floatexp import EXP_ZERO, LOG2_ZERO
 
 # gmpy2 provides 5-10x faster arbitrary precision arithmetic than mpmath.
 # Fall back to mpmath when gmpy2 is not installed.
@@ -28,7 +31,29 @@ except ImportError:
     _HAS_GMPY2 = False
 
 
-def required_precision(zoom: float, center_re: str | None = None,
+def zoom_to_log10(zoom: float | str) -> float:
+    """Convert a zoom value to log10, supporting depths beyond float64 range.
+
+    Zoom levels past ~1e308 cannot be represented as Python floats, so deep
+    pipelines pass zoom as a string (e.g. "1e500"). log10(zoom) is the
+    canonical internal scale for precision formulas and engine dispatch.
+    """
+    if isinstance(zoom, (int, float)):
+        return math.log10(zoom) if zoom > 0 else 0.0
+    with mpmath.workdps(30):
+        z = mpmath.mpf(zoom)
+        if z <= 0:
+            return 0.0
+        return float(mpmath.log10(z))
+
+
+def log10_to_zoom_str(log10_zoom: float) -> str:
+    """Render a log10 zoom level as a zoom string mpmath can parse back."""
+    with mpmath.workdps(20):
+        return mpmath.nstr(mpmath.power(10, mpmath.mpf(log10_zoom)), 8)
+
+
+def required_precision(zoom: float | str, center_re: str | None = None,
                        center_im: str | None = None) -> int:
     """Compute the number of decimal digits needed for a given zoom level.
 
@@ -38,20 +63,20 @@ def required_precision(zoom: float, center_re: str | None = None,
     center coordinate strings (+ 20 digit buffer).
 
     Args:
-        zoom: The zoom level (e.g. 1e50).
+        zoom: The zoom level (e.g. 1e50). May be a string for depths
+            beyond float64 range (e.g. "1e500").
         center_re: Optional center real coordinate string for digit counting.
         center_im: Optional center imaginary coordinate string for digit counting.
 
     Returns:
         Number of decimal digits for mpmath.mp.dps.
     """
-    import math
-
-    if zoom <= 1.0:
+    log10_zoom = zoom_to_log10(zoom)
+    if log10_zoom <= 0.0:
         return 16  # float64 is fine
 
     # Research formula: 1.5 * log10(zoom) + 30
-    digits = int(1.5 * math.log10(zoom)) + 30
+    digits = int(1.5 * log10_zoom) + 30
 
     # Ensure precision exceeds coordinate string digits + buffer
     for coord_str in (center_re, center_im):
@@ -84,6 +109,11 @@ class ReferenceOrbit:
         center_im_str: Full-precision imaginary center as decimal string.
         precision: Decimal digits used for computation.
         compute_time: Wall-clock seconds to compute the orbit.
+        z_m_re, z_m_im, z_exp: Extended-range orbit storage (floatexp):
+            Z_n = (z_m_re[n] + i*z_m_im[n]) * 2^z_exp[n]. Only populated
+            when the orbit is computed with extended=True. Needed at
+            extreme depth where orbit passes near 0 underflow float64.
+        z_log2_mag: log2(|Z_n|) per iterate (LOG2_ZERO for Z_n = 0).
     """
 
     z_re: np.ndarray
@@ -95,6 +125,15 @@ class ReferenceOrbit:
     center_im_str: str
     precision: int
     compute_time: float
+    z_m_re: np.ndarray | None = None
+    z_m_im: np.ndarray | None = None
+    z_exp: np.ndarray | None = None
+    z_log2_mag: np.ndarray | None = None
+
+    @property
+    def has_extended(self) -> bool:
+        """True when floatexp orbit arrays are populated."""
+        return self.z_exp is not None
 
 
 def compute_reference_orbit(
@@ -102,8 +141,9 @@ def compute_reference_orbit(
     center_im: str | float,
     max_iter: int,
     precision: int | None = None,
-    zoom: float | None = None,
+    zoom: float | str | None = None,
     escape_radius_sq: float = 256.0,
+    extended: bool = False,
 ) -> ReferenceOrbit:
     """Compute a reference orbit at arbitrary precision.
 
@@ -117,7 +157,11 @@ def compute_reference_orbit(
         max_iter: Maximum number of iterations.
         precision: Decimal digits for mpmath. If None, auto-computed from zoom.
         zoom: Zoom level, used to auto-compute precision if precision is None.
+            May be a string for depths beyond float64 (e.g. "1e500").
         escape_radius_sq: Squared escape radius (default 256 = radius 16).
+        extended: Also store the orbit as floatexp triples (mantissa pair +
+            shared power-of-two exponent). Required by the deep kernel where
+            orbit values near minibrot passes underflow float64.
 
     Returns:
         ReferenceOrbit with the full orbit data.
@@ -132,12 +176,52 @@ def compute_reference_orbit(
 
     if _HAS_GMPY2:
         return _compute_reference_orbit_gmpy2(
-            str(center_re), str(center_im), max_iter, precision, escape_radius_sq
+            str(center_re), str(center_im), max_iter, precision,
+            escape_radius_sq, extended,
         )
 
     return _compute_reference_orbit_mpmath(
-        str(center_re), str(center_im), max_iter, precision, escape_radius_sq
+        str(center_re), str(center_im), max_iter, precision,
+        escape_radius_sq, extended,
     )
+
+
+def _fxp_triple_gmpy2(z_r, z_i) -> tuple[float, float, int]:
+    """Extract a floatexp triple (m_re, m_im, shared_exp) from gmpy2 values."""
+    r_zero = z_r == 0
+    i_zero = z_i == 0
+    if r_zero and i_zero:
+        return 0.0, 0.0, EXP_ZERO
+    # gmpy2.frexp returns (exp, mantissa) with |mantissa| in [0.5, 1)
+    e_r = m_r = e_i = m_i = None
+    if not r_zero:
+        e_r, m_r = gmpy2.frexp(z_r)
+    if not i_zero:
+        e_i, m_i = gmpy2.frexp(z_i)
+    if r_zero:
+        e = e_i
+    elif i_zero:
+        e = e_r
+    else:
+        e = max(e_r, e_i)
+    out_re = math.ldexp(float(m_r), e_r - e) if not r_zero else 0.0
+    out_im = math.ldexp(float(m_i), e_i - e) if not i_zero else 0.0
+    return out_re, out_im, e
+
+
+def _finish_extended(m_re, m_im, m_exp, actual_len):
+    """Trim extended arrays and derive log2(|Z_n|) per iterate."""
+    m_re = m_re[:actual_len]
+    m_im = m_im[:actual_len]
+    m_exp = m_exp[:actual_len]
+    msq = m_re * m_re + m_im * m_im
+    with np.errstate(divide="ignore"):
+        log2_mag = np.where(
+            msq > 0.0,
+            m_exp.astype(np.float64) + 0.5 * np.log2(np.maximum(msq, 1e-320)),
+            LOG2_ZERO,
+        )
+    return m_re, m_im, m_exp, log2_mag
 
 
 def _compute_reference_orbit_gmpy2(
@@ -146,6 +230,7 @@ def _compute_reference_orbit_gmpy2(
     max_iter: int,
     precision: int,
     escape_radius_sq: float,
+    extended: bool = False,
 ) -> ReferenceOrbit:
     """Compute reference orbit using gmpy2 (5-10x faster than mpmath)."""
     # gmpy2 precision is in bits, not decimal digits
@@ -160,6 +245,13 @@ def _compute_reference_orbit_gmpy2(
     z_re_arr = np.empty(max_iter + 1, dtype=np.float64)
     z_im_arr = np.empty(max_iter + 1, dtype=np.float64)
     z_mag_arr = np.empty(max_iter + 1, dtype=np.float64)
+    if extended:
+        m_re_arr = np.empty(max_iter + 1, dtype=np.float64)
+        m_im_arr = np.empty(max_iter + 1, dtype=np.float64)
+        m_exp_arr = np.empty(max_iter + 1, dtype=np.int64)
+        m_re_arr[0] = 0.0
+        m_im_arr[0] = 0.0
+        m_exp_arr[0] = EXP_ZERO
 
     z_r = gmpy2.mpfr(0)
     z_i = gmpy2.mpfr(0)
@@ -184,6 +276,8 @@ def _compute_reference_orbit_gmpy2(
         z_re_arr[n] = float(z_r)
         z_im_arr[n] = float(z_i)
         z_mag_arr[n] = float(mag_sq)
+        if extended:
+            m_re_arr[n], m_im_arr[n], m_exp_arr[n] = _fxp_triple_gmpy2(z_r, z_i)
 
         if mag_sq > escape_sq:
             escape_iter = n
@@ -197,6 +291,14 @@ def _compute_reference_orbit_gmpy2(
     c_re_mp = mpmath.mpf(center_re_str)
     c_im_mp = mpmath.mpf(center_im_str)
 
+    ext = {}
+    if extended:
+        m_re_arr, m_im_arr, m_exp_arr, log2_mag = _finish_extended(
+            m_re_arr, m_im_arr, m_exp_arr, actual_len
+        )
+        ext = dict(z_m_re=m_re_arr, z_m_im=m_im_arr, z_exp=m_exp_arr,
+                   z_log2_mag=log2_mag)
+
     return ReferenceOrbit(
         z_re=z_re_arr[:actual_len],
         z_im=z_im_arr[:actual_len],
@@ -207,7 +309,33 @@ def _compute_reference_orbit_gmpy2(
         center_im_str=mpmath.nstr(c_im_mp, precision, strip_zeros=False),
         precision=precision,
         compute_time=elapsed,
+        **ext,
     )
+
+
+def _fxp_triple_mpmath(z_r, z_i) -> tuple[float, float, int]:
+    """Extract a floatexp triple from mpmath values."""
+    r_zero = z_r == 0
+    i_zero = z_i == 0
+    if r_zero and i_zero:
+        return 0.0, 0.0, EXP_ZERO
+    # mpmath.frexp returns (mantissa, exp) — note: opposite order to gmpy2
+    e_r = m_r = e_i = m_i = None
+    if not r_zero:
+        m_r, e_r = mpmath.frexp(z_r)
+        e_r = int(e_r)
+    if not i_zero:
+        m_i, e_i = mpmath.frexp(z_i)
+        e_i = int(e_i)
+    if r_zero:
+        e = e_i
+    elif i_zero:
+        e = e_r
+    else:
+        e = max(e_r, e_i)
+    out_re = math.ldexp(float(m_r), e_r - e) if not r_zero else 0.0
+    out_im = math.ldexp(float(m_i), e_i - e) if not i_zero else 0.0
+    return out_re, out_im, e
 
 
 def _compute_reference_orbit_mpmath(
@@ -216,6 +344,7 @@ def _compute_reference_orbit_mpmath(
     max_iter: int,
     precision: int,
     escape_radius_sq: float,
+    extended: bool = False,
 ) -> ReferenceOrbit:
     """Compute reference orbit using mpmath (fallback when gmpy2 unavailable)."""
     mpmath.mp.dps = precision
@@ -226,6 +355,7 @@ def _compute_reference_orbit_mpmath(
     z_re_list = []
     z_im_list = []
     z_mag_sq_list = []
+    m_triples = [(0.0, 0.0, EXP_ZERO)] if extended else None
 
     z_r = mpmath.mpf(0)
     z_i = mpmath.mpf(0)
@@ -249,12 +379,25 @@ def _compute_reference_orbit_mpmath(
         z_re_list.append(float(z_r))
         z_im_list.append(float(z_i))
         z_mag_sq_list.append(float(mag_sq))
+        if extended:
+            m_triples.append(_fxp_triple_mpmath(z_r, z_i))
 
         if mag_sq > escape_radius_sq_mp:
             escape_iter = n
             break
 
     elapsed = time.perf_counter() - start_time
+
+    ext = {}
+    if extended:
+        m_re_arr = np.array([t[0] for t in m_triples], dtype=np.float64)
+        m_im_arr = np.array([t[1] for t in m_triples], dtype=np.float64)
+        m_exp_arr = np.array([t[2] for t in m_triples], dtype=np.int64)
+        m_re_arr, m_im_arr, m_exp_arr, log2_mag = _finish_extended(
+            m_re_arr, m_im_arr, m_exp_arr, len(m_triples)
+        )
+        ext = dict(z_m_re=m_re_arr, z_m_im=m_im_arr, z_exp=m_exp_arr,
+                   z_log2_mag=log2_mag)
 
     return ReferenceOrbit(
         z_re=np.array(z_re_list, dtype=np.float64),
@@ -266,6 +409,7 @@ def _compute_reference_orbit_mpmath(
         center_im_str=mpmath.nstr(c_im, precision, strip_zeros=False),
         precision=precision,
         compute_time=elapsed,
+        **ext,
     )
 
 

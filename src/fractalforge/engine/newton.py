@@ -74,6 +74,33 @@ class BoundaryPoint:
     converged: bool
 
 
+@dataclass
+class MisiurewiczPoint:
+    """A Misiurewicz (pre-periodic) point of the Mandelbrot set.
+
+    The critical orbit settles onto a repelling cycle after a short
+    transient: f^{preperiod+period}(0) = f^{preperiod}(0). These points sit
+    at the centers of spirals and dendrites, and are the ideal targets for
+    *extreme* deep zoom: unlike minibrot nuclei (whose period -- and hence
+    reference-orbit length -- grows with depth), a Misiurewicz reference
+    orbit stays short while the embedded Julia structure repeats at every
+    scale. Zoom depth is then limited only by coordinate precision.
+
+    Attributes:
+        c_re, c_im: High-precision coordinate strings.
+        preperiod: Transient length before the orbit enters its cycle.
+        period: Period of the repelling cycle.
+        precision: Decimal digits used.
+        converged: Whether Newton converged to the requested precision.
+    """
+    c_re: str
+    c_im: str
+    preperiod: int
+    period: int
+    precision: int
+    converged: bool
+
+
 def detect_period(c_re_str: str, c_im_str: str, max_period: int = 10000,
                   precision: int = 50) -> int:
     """Detect the period of the nearest hyperbolic component.
@@ -938,4 +965,113 @@ def find_deep_target(c_re_str: str, c_im_str: str,
             precision=precision,
             converged=True,
         )
+    return None
+
+
+def _orbit_and_deriv_mpmath(c, n):
+    """Return (f_c^n(0), d/dc f_c^n(0)) tracking z and dz/dc at precision."""
+    z = mpmath.mpf(0)
+    dz = mpmath.mpf(0)
+    for _ in range(n):
+        dz = 2 * z * dz + 1
+        z = z * z + c
+    return z, dz
+
+
+def find_misiurewicz(
+    c_re_str: str,
+    c_im_str: str,
+    preperiod: int | None = None,
+    period: int | None = None,
+    precision: int = 120,
+    max_preperiod: int = 40,
+    max_period: int = 40,
+    newton_steps: int = 80,
+    verbose: bool = False,
+) -> MisiurewiczPoint | None:
+    """Find a Misiurewicz (pre-periodic) point near a seed coordinate.
+
+    Solves g(c) = f_c^{m+p}(0) - f_c^{m}(0) = 0 by Newton's method, where m
+    is the pre-period and p the period of the repelling cycle. When m and p
+    are not given, searches small (m, p) pairs and returns the lowest-order
+    pre-periodic point reachable from the seed.
+
+    Misiurewicz points are the preferred targets for extreme deep zoom: the
+    reference orbit stays short at any depth (see MisiurewiczPoint), so the
+    floatexp deep kernel can dive to 1e500+ without an intractable orbit.
+
+    Args:
+        c_re_str, c_im_str: Seed coordinate (strings preserve precision).
+        preperiod, period: Force a specific (m, p); auto-searched if None.
+        precision: Decimal digits for the refined coordinate.
+        max_preperiod, max_period: Search bounds when auto-detecting.
+        newton_steps: Maximum Newton iterations.
+        verbose: Print progress.
+
+    Returns:
+        A converged MisiurewiczPoint, or None if none found.
+    """
+    mpmath.mp.dps = precision
+    seed = mpmath.mpc(c_re_str, c_im_str)
+    tol = mpmath.mpf(10) ** (-precision + 12)
+
+    if preperiod is not None and period is not None:
+        pairs = [(preperiod, period)]
+    else:
+        # Search by total order m+p so the simplest (most robust, widest-basin)
+        # point wins.
+        pairs = sorted(
+            ((m, p) for m in range(1, max_preperiod + 1)
+             for p in range(1, max_period + 1)),
+            key=lambda mp: (mp[0] + mp[1], mp[1]),
+        )
+
+    for m, p in pairs:
+        c = seed
+        converged = False
+        for _ in range(newton_steps):
+            zm, dzm = _orbit_and_deriv_mpmath(c, m)
+            zmp, dzmp = _orbit_and_deriv_mpmath(c, m + p)
+            g = zmp - zm
+            dg = dzmp - dzm
+            if abs(dg) == 0:
+                break
+            dc = g / dg
+            c = c - dc
+            if abs(dc) < tol:
+                converged = True
+                break
+        if not converged:
+            continue
+
+        # Validate: g ~ 0 (Misiurewicz) and NOT a plain period-p nucleus
+        # (a nucleus has f^p(0)=0, which the equation also admits).
+        zm, _ = _orbit_and_deriv_mpmath(c, m)
+        zmp, _ = _orbit_and_deriv_mpmath(c, m + p)
+        z_p, _ = _orbit_and_deriv_mpmath(c, p)
+        resid = abs(zmp - zm)
+        if resid > mpmath.mpf(10) ** (-precision + 20):
+            continue
+        if abs(z_p) < tol:
+            continue  # periodic nucleus, not pre-periodic
+        # Reject if a smaller pre-period already satisfies (true m is minimal)
+        zm1, _ = _orbit_and_deriv_mpmath(c, m - 1) if m > 1 else (None, None)
+        if m > 1:
+            zmp1, _ = _orbit_and_deriv_mpmath(c, m - 1 + p)
+            if abs(zmp1 - zm1) < tol:
+                continue  # m-1 also works, so this m isn't minimal
+
+        if verbose:
+            print(f"Misiurewicz M({m},{p}) found, residual {mpmath.nstr(resid, 3)}")
+        return MisiurewiczPoint(
+            c_re=mpmath.nstr(c.real, precision, strip_zeros=False),
+            c_im=mpmath.nstr(c.imag, precision, strip_zeros=False),
+            preperiod=m,
+            period=p,
+            precision=precision,
+            converged=True,
+        )
+
+    if verbose:
+        print("No Misiurewicz point found near seed")
     return None

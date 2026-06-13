@@ -24,8 +24,18 @@ from numba import cuda, njit, prange
 
 from fractalforge.engine.precision import (
     compute_reference_orbit, compute_series_approximation_hp, ReferenceOrbit,
+    zoom_to_log10,
 )
-from fractalforge.engine.bla import compute_bla_table, BLATable
+from fractalforge.engine.bla import compute_bla_table, compute_bla_table_fxp, BLATable
+
+# At/above this log10(zoom) the float64 kernels would need proactive rebasing
+# (|Z+d| < |d| near-zero passages). But float64 rebasing folds d back to O(1),
+# at which point the per-pixel dc (~10^-zoom) underflows the float64 mantissa
+# and pixels lose their identity — manifesting as false-interior blocks,
+# especially for bounded (Misiurewicz / dendrite) references. The floatexp
+# deep kernel keeps dc at full precision through rebasing, so we hand off to
+# it exactly where rebasing engages rather than limping along in float64.
+DEEP_FXP_LOG10 = 18.0
 
 
 # ============================================================================
@@ -534,7 +544,7 @@ def _find_glitch_reference(
 def render_frame_perturbation(
     center_re: str | float,
     center_im: str | float,
-    zoom: float,
+    zoom: float | str,
     width: int,
     height: int,
     max_iter: int = 1000,
@@ -546,11 +556,17 @@ def render_frame_perturbation(
     pixels as float64 deltas from that reference. Handles glitch detection
     and correction with up to 3 re-reference passes.
 
+    Beyond ~1e150 zoom the float64 delta kernels approach underflow, so the
+    frame is routed to the floatexp deep kernel (BLA + rebasing, unbounded
+    exponent range). Zoom may be passed as a string (e.g. "1e500") for
+    depths beyond float64 range entirely.
+
     Args:
         center_re: Real part of the center coordinate. Pass as string for
             full precision at deep zoom (e.g. "-0.7436438870371587").
         center_im: Imaginary part of the center coordinate.
         zoom: Zoom level (1.0 = full view, higher = more zoomed in).
+            Accepts a string for arbitrary depth.
         width: Frame width in pixels.
         height: Frame height in pixels.
         max_iter: Maximum iterations before considering a point interior.
@@ -564,6 +580,13 @@ def render_frame_perturbation(
     center_im_str = str(center_im)
 
     gpu = use_gpu if use_gpu is not None else CUDA_AVAILABLE
+
+    log10_zoom = zoom_to_log10(zoom)
+    if log10_zoom >= DEEP_FXP_LOG10:
+        return _render_deep_fxp(
+            center_re_str, center_im_str, zoom, width, height, max_iter, gpu,
+        )
+    zoom = float(zoom)
 
     # Viewport geometry (same as mandelbrot.py)
     aspect = width / height
@@ -656,7 +679,7 @@ def render_frame_perturbation(
     bla_table = None
     if ref.num_iters > 10000:
         bla_table = compute_bla_table(
-            ref.z_re, ref.z_im, ref.num_iters, pixel_spacing,
+            ref.z_re, ref.z_im, ref.num_iters, dc_max=math.sqrt(dc_max_mag_sq),
         )
 
     # DZ-P1-03: Only enable proactive rebasing at deep zoom where deltas are
@@ -735,7 +758,8 @@ def render_frame_perturbation(
         bla_table2 = None
         if ref2.num_iters > 100:
             bla_table2 = compute_bla_table(
-                ref2.z_re, ref2.z_im, ref2.num_iters, pixel_spacing,
+                ref2.z_re, ref2.z_im, ref2.num_iters,
+                dc_max=math.sqrt(new_dc_max_mag_sq),
             )
 
         # Render the correction pass (full frame, then merge only glitched pixels)
@@ -753,6 +777,65 @@ def render_frame_perturbation(
         # Update glitch map: keep pixels that are STILL glitched
         glitch_out[glitch_mask] = glitch2[glitch_mask]
 
+    return smooth_out
+
+
+def _render_deep_fxp(
+    center_re_str: str,
+    center_im_str: str,
+    zoom: float | str,
+    width: int,
+    height: int,
+    max_iter: int,
+    gpu: bool,
+) -> np.ndarray:
+    """Render via the floatexp deep kernel (zoom beyond ~1e150).
+
+    The dc pixel grid is expressed as float64 mantissas sharing one
+    power-of-two frame exponent, so pixel offsets remain exact at depths
+    where their absolute values underflow float64.
+    """
+    import mpmath
+
+    from fractalforge.engine.deep_kernel import render_cpu_deep, render_gpu_deep
+
+    aspect = width / height
+    with mpmath.workdps(40):
+        zoom_mp = mpmath.mpf(str(zoom))
+        view_h = mpmath.mpf(3) / zoom_mp
+        view_w = view_h * aspect
+
+        _, frame_e = mpmath.frexp(max(view_w, view_h))
+        frame_e = int(frame_e)
+        min_dc_re_m = float(mpmath.ldexp(-view_w / 2, -frame_e))
+        min_dc_im_m = float(mpmath.ldexp(-view_h / 2, -frame_e))
+        step_re_m = float(mpmath.ldexp(view_w / width, -frame_e))
+        step_im_m = float(mpmath.ldexp(view_h / height, -frame_e))
+
+        corner = mpmath.sqrt((view_w / 2) ** 2 + (view_h / 2) ** 2)
+        dc_max_m_mp, dc_max_e = mpmath.frexp(corner)
+        dc_max_m = float(dc_max_m_mp)
+        dc_max_e = int(dc_max_e)
+
+    ref = compute_reference_orbit(
+        center_re=center_re_str,
+        center_im=center_im_str,
+        max_iter=max_iter,
+        zoom=zoom,
+        extended=True,
+    )
+
+    bla_table = compute_bla_table_fxp(
+        ref.z_m_re, ref.z_m_im, ref.z_exp, ref.num_iters,
+        dc_max_m, dc_max_e,
+    )
+
+    render_fn = render_gpu_deep if gpu else render_cpu_deep
+    smooth_out, _ = render_fn(
+        ref, bla_table,
+        min_dc_re_m, min_dc_im_m, step_re_m, step_im_m, frame_e,
+        max_iter, height, width,
+    )
     return smooth_out
 
 

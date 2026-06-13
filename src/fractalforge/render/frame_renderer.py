@@ -12,6 +12,7 @@ from PIL import Image
 
 from fractalforge.engine.coloring import smooth_to_image
 from fractalforge.engine.mandelbrot import render_frame
+from fractalforge.engine.precision import zoom_to_log10
 from fractalforge.artist.palette import get_palette
 
 # Zoom threshold for switching to perturbation theory.
@@ -19,17 +20,23 @@ from fractalforge.artist.palette import get_palette
 # than perturbation for chaotic orbits (period >1000). By 1e15, float64
 # is truly unusable and perturbation is essential.
 _DEEP_ZOOM_THRESHOLD = 1e13
+_DEEP_ZOOM_LOG10 = 13.0
 
 
-def _needs_perturbation(zoom: float) -> bool:
-    """Return True if zoom level requires perturbation theory."""
+def _needs_perturbation(zoom: float | str) -> bool:
+    """Return True if zoom level requires perturbation theory.
+
+    Accepts zoom as a string for depths beyond float64 range (e.g. "1e500").
+    """
+    if isinstance(zoom, str):
+        return zoom_to_log10(zoom) >= _DEEP_ZOOM_LOG10
     return zoom >= _DEEP_ZOOM_THRESHOLD
 
 
 def render_single(
     center_re: float | str = -0.75,
     center_im: float | str = 0.0,
-    zoom: float = 1.0,
+    zoom: float | str = 1.0,
     width: int = 1920,
     height: int = 1080,
     max_iter: int = 1000,
@@ -78,7 +85,7 @@ def render_single(
             c_im=julia_im or 0.1889,
             center_re=float(center_re),
             center_im=float(center_im),
-            zoom=zoom,
+            zoom=float(zoom),
             width=render_w,
             height=render_h,
             max_iter=max_iter,
@@ -89,7 +96,7 @@ def render_single(
         smooth_data = render_frame_burning_ship(
             center_re=float(center_re),
             center_im=float(center_im),
-            zoom=zoom,
+            zoom=float(zoom),
             width=render_w,
             height=render_h,
             max_iter=max_iter,
@@ -109,7 +116,7 @@ def render_single(
     else:
         use_de = distance_coloring and fractal_type == "mandelbrot"
         result = render_frame(
-            float(center_re), float(center_im), zoom,
+            float(center_re), float(center_im), float(zoom),
             render_w, render_h, max_iter, use_gpu=use_gpu, distance=use_de,
         )
         if use_de:
@@ -153,7 +160,7 @@ def render_and_save(
     output_path: Path,
     center_re: float | str = -0.75,
     center_im: float | str = 0.0,
-    zoom: float = 1.0,
+    zoom: float | str = 1.0,
     width: int = 1920,
     height: int = 1080,
     max_iter: int = 1000,
