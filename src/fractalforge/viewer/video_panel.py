@@ -156,7 +156,13 @@ class VideoRenderPanel:
     def update(self):
         """Called every frame to refresh target info and progress."""
         # Update target info
-        zoom_str = f"{self.state.zoom:.2e}" if self.state.zoom >= 1e4 else f"{self.state.zoom:.1f}"
+        lz = self.state.log10_zoom
+        if lz < 4:
+            zoom_str = f"{10.0 ** lz:.1f}"
+        elif lz < 290:
+            zoom_str = f"{10.0 ** lz:.2e}"
+        else:
+            zoom_str = f"10^{lz:.1f}"
         if self.state.needs_perturbation:
             re_str = self.state.center_re_hp
             im_str = self.state.center_im_hp

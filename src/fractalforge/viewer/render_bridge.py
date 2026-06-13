@@ -3,63 +3,86 @@
 Uses a single-threaded ThreadPoolExecutor so the GPU render runs on a
 dedicated thread, keeping the Dear PyGui main loop responsive. Only one
 render is in-flight at a time; if a new render is requested while one is
-running, it queues up and the stale result is discarded.
+running, the latest state queues and the stale result is discarded.
+
+Supports progressive rendering: a ``scale`` < 1 renders at reduced resolution
+(snappy during interaction) and upsamples to the preview size; the app then
+re-renders at full scale once interaction settles.
 """
 
-import math
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 
 import numpy as np
 
-from fractalforge.viewer.state import ViewerState
+from fractalforge.viewer.state import ViewerState, DEEP_ZOOM_LOG10, DEEP_FXP_LOG10
 
 
-def _auto_max_iter(zoom: float, user_max_iter: int, auto: bool = True) -> int:
-    """Compute effective max_iter, ensuring it's sufficient for the zoom depth.
+def auto_max_iter(log10_zoom: float, user_max_iter: int, auto: bool = True) -> int:
+    """Effective max_iter for a zoom depth.
 
-    When auto=True, scales iterations with zoom depth:
-    - 500 base + 300 per decade of zoom
-    - Returns the max of computed floor and user's manual setting
-    When auto=False, returns the user's manual setting unchanged.
+    Shallow zooms need head-room for long-period orbits (300/decade). Beyond
+    the perturbation threshold the dominant cost is embedded-Julia escape depth,
+    which grows only modestly with log-zoom, so we use a gentler 60/decade to
+    keep extreme renders tractable.
     """
-    if not auto or zoom <= 1.0:
+    if not auto or log10_zoom <= 0.0:
         return user_max_iter
-    zoom_floor = int(500 + 300 * math.log10(zoom))
-    return max(user_max_iter, zoom_floor)
+    if log10_zoom < DEEP_FXP_LOG10:
+        floor = int(500 + 300 * log10_zoom)
+    else:
+        floor = int(2000 + 60 * log10_zoom)
+    return max(user_max_iter, floor)
 
 
-def _do_render(state: ViewerState) -> tuple[np.ndarray, float]:
+def engine_label(state: ViewerState) -> str:
+    """Short badge for which engine the current zoom will use."""
+    if state.fractal_type != "mandelbrot":
+        return state.fractal_type
+    if state.log10_zoom >= DEEP_FXP_LOG10:
+        return "FXP"      # floatexp deep kernel
+    if state.log10_zoom >= DEEP_ZOOM_LOG10:
+        return "PT"       # perturbation theory (float64 deltas)
+    return "STD"          # standard float64
+
+
+def _do_render(state: ViewerState, scale: float = 1.0) -> tuple[np.ndarray, float, str]:
     """Execute a render on the worker thread.
 
-    Returns:
-        Tuple of (flat float32 RGBA array for DPG texture, render_ms).
+    Returns (flat float32 RGBA array sized to the preview, render_ms, engine).
     """
     from fractalforge.render.frame_renderer import render_single
+    from PIL import Image
 
     start = time.perf_counter()
 
-    # Use high-precision string coordinates for perturbation theory
+    out_w, out_h = state.preview_width, state.preview_height
+    render_w = max(16, int(out_w * scale))
+    render_h = max(16, int(out_h * scale))
+
+    # Deep zoom: pass string coords + string zoom to preserve precision.
     if state.needs_perturbation:
         center_re = state.center_re_hp
         center_im = state.center_im_hp
+        zoom = state.zoom_str
     else:
         center_re = state.center_re
         center_im = state.center_im
+        zoom = state.zoom
 
-    # Auto-scale max_iter based on zoom depth
-    effective_max_iter = _auto_max_iter(state.zoom, state.max_iter, state.auto_max_iter)
+    effective_max_iter = auto_max_iter(state.log10_zoom, state.max_iter,
+                                       state.auto_max_iter)
 
-    # Auto-enable histogram EQ at deep zoom -- without it, the narrow iteration
-    # range maps to a single palette color and the image looks flat/monochrome
+    # Auto-enable histogram EQ at deep zoom -- the narrow iteration band would
+    # otherwise map to a single flat color.
     use_histogram = state.histogram or state.needs_perturbation
 
     img = render_single(
         center_re=center_re,
         center_im=center_im,
-        zoom=state.zoom,
-        width=state.preview_width,
-        height=state.preview_height,
+        zoom=zoom,
+        width=render_w,
+        height=render_h,
         max_iter=effective_max_iter,
         palette_name=state.palette_name,
         fractal_type=state.fractal_type,
@@ -75,15 +98,18 @@ def _do_render(state: ViewerState) -> tuple[np.ndarray, float]:
         use_gpu=True,
     )
 
+    # Upsample a reduced-scale render back to the preview size (nearest keeps
+    # it fast and crisp; the full-res pass replaces it shortly after).
+    if (render_w, render_h) != (out_w, out_h):
+        img = img.resize((out_w, out_h), Image.NEAREST)
+
     elapsed_ms = (time.perf_counter() - start) * 1000.0
 
-    # Convert PIL Image to flat float32 RGBA array [0, 1] for DPG raw texture
     arr = np.array(img, dtype=np.float32) / 255.0
-    # Add alpha channel (DPG raw textures need RGBA)
     h, w, _ = arr.shape
     rgba = np.ones((h, w, 4), dtype=np.float32)
     rgba[:, :, :3] = arr
-    return rgba.flatten(), elapsed_ms
+    return rgba.flatten(), elapsed_ms, engine_label(state)
 
 
 class RenderBridge:
@@ -92,53 +118,37 @@ class RenderBridge:
     def __init__(self):
         self._executor = ThreadPoolExecutor(max_workers=1)
         self._future: Future | None = None
-        self._pending_state: ViewerState | None = None
+        self._pending: tuple[ViewerState, float] | None = None
 
-    def submit(self, state: ViewerState):
-        """Submit a render request.
-
-        If a render is already in-flight, queues the latest state so
-        the result updates as soon as the current render completes.
-        """
+    def submit(self, state: ViewerState, scale: float = 1.0):
+        """Submit a render request (optionally at reduced scale)."""
         if self._future is not None and not self._future.done():
-            # Queue the latest state; discard intermediate requests
-            self._pending_state = state
+            self._pending = (state, scale)
             return
+        self._pending = None
+        self._future = self._executor.submit(_do_render, state, scale)
 
-        # Snapshot the state values we need (avoid race conditions)
-        self._pending_state = None
-        self._future = self._executor.submit(_do_render, state)
+    def busy(self) -> bool:
+        return self._future is not None and not self._future.done()
 
     def check(self, state: ViewerState) -> np.ndarray | None:
-        """Check if a render completed. Call this every frame.
-
-        Returns:
-            Flat float32 RGBA array if a render completed, else None.
-        """
-        if self._future is None:
+        """Check if a render completed. Call every frame."""
+        if self._future is None or not self._future.done():
             return None
-
-        if not self._future.done():
-            return None
-
         try:
-            result, elapsed_ms = self._future.result()
+            result, elapsed_ms, engine = self._future.result()
             state.last_render_ms = elapsed_ms
+            state.last_engine = engine
         except Exception as e:
             print(f"Render error: {e}")
             self._future = None
             return None
-
         self._future = None
-
-        # If another render was queued while this one was running, start it
-        if self._pending_state is not None:
-            pending = self._pending_state
-            self._pending_state = None
-            self._future = self._executor.submit(_do_render, pending)
-
+        if self._pending is not None:
+            pending_state, pending_scale = self._pending
+            self._pending = None
+            self._future = self._executor.submit(_do_render, pending_state, pending_scale)
         return result
 
     def shutdown(self):
-        """Clean up the thread pool."""
         self._executor.shutdown(wait=False)
