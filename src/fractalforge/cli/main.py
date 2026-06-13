@@ -38,7 +38,8 @@ def cli():
 @cli.command()
 @click.option("--center-re", "-x", default="-0.75", type=str, help="Real part of center (string for deep zoom precision).")
 @click.option("--center-im", "-y", default="0.0", type=str, help="Imaginary part of center (string for deep zoom precision).")
-@click.option("--zoom", "-z", default=1.0, type=float, help="Zoom level.")
+@click.option("--zoom", "-z", default="1.0", type=str,
+              help="Zoom level. Accepts huge values for deep zoom, e.g. 1e200, 1e500.")
 @click.option("--width", "-w", default=None, type=int, help="Frame width (overrides preset).")
 @click.option("--height", "-h", default=None, type=int, help="Frame height (overrides preset).")
 @click.option("--max-iter", "-i", default=1000, type=int, help="Maximum iterations.")
@@ -78,7 +79,7 @@ def cli():
 def render(
     center_re: str,
     center_im: str,
-    zoom: float,
+    zoom: str,
     width: int | None,
     height: int | None,
     max_iter: int,
@@ -108,18 +109,23 @@ def render(
     """
     from fractalforge.render.frame_renderer import render_and_save
     from fractalforge.engine.mandelbrot import CUDA_AVAILABLE
+    from fractalforge.engine.precision import zoom_to_log10
 
-    # Preserve string coordinates for deep zoom; also parse as float for config display
+    # Preserve string coordinates AND string zoom for deep zoom; parse floats
+    # only for config display / resolution logic (capped below float64's ceiling).
     center_re_str = center_re
     center_im_str = center_im
+    zoom_str = zoom
     center_re_float = float(center_re)
     center_im_float = float(center_im)
+    log10_zoom = zoom_to_log10(zoom)
+    zoom_float = 10.0 ** log10_zoom if log10_zoom < 300 else 1e300
 
     # Resolve resolution: preset -> explicit w/h -> default
     config = RenderConfig(
         center_re=center_re_float,
         center_im=center_im_float,
-        zoom=zoom,
+        zoom=zoom_float,
         max_iter=max_iter,
         palette=palette,
     )
@@ -134,8 +140,13 @@ def render(
 
     use_gpu = not cpu and CUDA_AVAILABLE
     backend = "GPU (CUDA)" if use_gpu else "CPU"
-    deep_zoom = config.zoom >= 1e13 and fractal == "mandelbrot"
-    engine = "perturbation theory" if deep_zoom else "standard float64"
+    deep_zoom = log10_zoom >= 13.0 and fractal == "mandelbrot"
+    if not deep_zoom:
+        engine = "standard float64"
+    elif log10_zoom >= 18.0:
+        engine = "floatexp deep kernel"
+    else:
+        engine = "perturbation theory"
 
     console.print(f"[bold cyan]FractalForge[/] v{__version__}")
     if fractal != "mandelbrot":
@@ -145,7 +156,8 @@ def render(
         jim = julia_im if julia_im is not None else 0.1889
         console.print(f"  Julia c:   ({jre}, {jim})")
     console.print(f"  Center:    ({center_re_str}, {center_im_str})")
-    console.print(f"  Zoom:      {config.zoom:.2e}")
+    zoom_disp = f"{config.zoom:.2e}" if log10_zoom < 290 else f"10^{log10_zoom:.1f}"
+    console.print(f"  Zoom:      {zoom_disp}")
     console.print(f"  Size:      {config.width}x{config.height}")
     if preset:
         console.print(f"  Preset:    {preset}")
@@ -176,7 +188,7 @@ def render(
         output_path=Path(output),
         center_re=center_re_str if deep_zoom else config.center_re,
         center_im=center_im_str if deep_zoom else config.center_im,
-        zoom=config.zoom,
+        zoom=zoom_str if deep_zoom else config.zoom,
         width=config.width,
         height=config.height,
         max_iter=config.max_iter,
