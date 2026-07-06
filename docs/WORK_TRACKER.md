@@ -187,6 +187,20 @@
 | CW-08 | Shuffle Style randomizer + Reset | ✅ Done | look-only, safe mid-dive |
 | CW-09 | Bilinear progressive upscale | ✅ Done | replaces blocky nearest during interaction |
 
+## Sprint QA: Field-Testing Fixes (2026-07-05..06)
+
+*Goal: Iron out artifacts found in user exploration testing.*
+
+| ID | Item | Status | Notes |
+|----|------|--------|-------|
+| QA-01 | Rebase counted as iteration -> blocky seams | ✅ Done | all 6 kernels; ground-truth median 3.0 -> 0.0; AD-021/LL-009 |
+| QA-02 | Inverted BLA level-0 validity radius -> circular disc | ✅ Done | r = eps*\|Z_n\| (research doc formula was garbled); AD-022/LL-010 |
+| QA-03 | Resolution-aware STD->PT dispatch (streaks at 7e12@1080p) | ✅ Done | pixel spacing < 2e-14 rule; AD-023 |
+| QA-04 | FXP handoff 1e18 -> 1e13 (PT moire rings at 4.6e17) | ✅ Done | fxp owns >=1e13; PT keeps narrow safe window |
+| QA-05 | Auto max-iter too stingy at depth | ✅ Done | deep slope 60 -> 400/decade |
+| QA-06 | Julia deep zoom = noise (no perturbation) | ✅ Done | Julia PT engine, ceiling ~1e30; AD-024; test_julia_pt.py |
+| QA-07 | Julia rebasing/floatexp for 1e30+ | 🔲 Future | v1 ceiling fine for exploration; extend if needed |
+
 ## Phase 5: Production & Scaling
 
 *Goal: RunPod integration, 4K renders, production workflow.*
