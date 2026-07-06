@@ -722,3 +722,48 @@ arms. BLA-vs-exact shared the rebase accounting, so a rebase bug was invisible
 to it — always keep one arm that is a fully independent implementation (plain
 float64 ground truth). And treat suspiciously exact integer medians (3.0000)
 as signal, never noise: continuous processes don't produce integer offsets.
+
+---
+
+### AD-022: BLA Level-0 Validity Radius Was Inverted (Circular Disc Fix)
+
+**Date:** 2026-07-05
+**Decision:** Level-0 BLA validity radius is `r_1(n) = eps * |Z_n|`
+(Zhuoran's criterion) — proportional to `|Z_n|`, so it collapses at
+near-zero orbit passages. The merge formula
+`min(r_x, max(0, (r_y - |B_x||dc|)/|A_x|))` is unchanged (it was correct).
+
+**Problem:** User testing found a sharp-edged circular disc of
+coherent-but-wrong rendering, centered mid-frame, at ~8e70 near minibrot
+structure. A circle centered on the frame means a boundary in |dc| — distance
+from the reference — and the only thing that partitions pixels that way is
+the BLA validity radius. The implemented level-0 formula (taken faithfully
+from DEEP_RESEARCH_RESULTS.md) was
+`r = (eps|Z_{n+1}| - |dc|) / |A_1|` with `|A_1| = 2|Z_n|` — |Z_n| in the
+DENOMINATOR. The correct criterion bounds the dropped d^2 term against the
+kept linear term (`|d|/(2|Z_n|) <= eps`), giving r PROPORTIONAL to |Z_n|.
+The inversion made the radius explode exactly at near-zero passages — where
+d^2 dominates and no linear jump is valid. Pixels inside a |dc| circle jumped
+straight through critical-point approaches, landing with O(1) relative error:
+a coherent, slightly-shifted copy of the structure inside a crisp disc.
+
+**Why earlier tests missed it:** every validation orbit (c = i, M(22,1))
+never approaches zero — c = i's orbit magnitudes cycle between 1 and sqrt(2),
+so |A| never got small and the inversion was harmless there. Real exploration
+targets shadow minibrot nucleus cycles, whose orbits dip near 0 every period.
+
+**Proof:** a synthetic 64-step orbit with one 1e-9 dip: stored entries
+spanning the dip allowed |d| up to 2^-33.5 vs the true ceiling 2^-83 —
+50 bits too loose. After the fix, spanning entries sit at 2^-82.4.
+
+**Validation:** synthetic-orbit property tests (`tests/test_bla_validity.py`);
+BLA-vs-exact diff 0.0000 at 1e35..1e300 including an escaped-reference case
+that stresses the end-of-orbit rebase; full suite (36) green.
+
+**Lesson (LL-010):** Verify algorithm formulas against a primary source
+before implementing — the deep-research document garbled this one, and the
+implementation faithfully reproduced the error. And test coverage must
+include the *regimes* a formula branches on: every prior test orbit stayed
+bounded away from zero, the exact regime where the formula was wrong.
+Sanity-check limits: r(Z→0) should obviously vanish (you cannot linearize
+through the critical point), and the broken formula diverged there instead.

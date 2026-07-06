@@ -10,13 +10,20 @@ Coefficients are organized in a binary tree (levels = powers of 2):
   Level 0: single-step   A_1(n) = 2*Z_n,  B_1(n) = 1
   Level L: 2^L steps     composed from two level-(L-1) jumps
 
-Validity radii follow the research-validated formulation (Zhuoran / Claude
-Heiland-Allen) rather than the earlier epsilon/|A| heuristic:
-    single step:  r_1(n)   = max(0, (eps*|Z_{n+1}| - |B_1|*|dc_max|) / |A_1|)
+Validity radii (Zhuoran's formulation):
+    single step:  r_1(n)   = eps * |Z_n|
     merge x+y:    r_{x+y}  = min(r_x, max(0, (r_y - |B_x|*|dc_max|) / |A_x|))
-The |B|*|dc_max| term accounts for the spatial divergence contributed by dc
-during the skipped segment, which the old heuristic ignored — that omission
-is what tears BLA apart beyond ~1e50.
+
+The single-step radius bounds the dropped d^2 term relative to the kept
+linear term: |d^2 / (2*Z_n*d)| = |d| / (2|Z_n|) <= eps/2 when |d| <= eps|Z_n|.
+Crucially r_1 is PROPORTIONAL to |Z_n|: it collapses to zero at near-zero
+orbit passages, where d^2 dominates and no linear jump is valid. (An earlier
+formula divided by |A_1| = 2|Z_n| instead, making the radius EXPLODE exactly
+there — pixels jumped straight through critical-point passages and landed
+with O(1) relative error, rendering as coherent-but-wrong circular regions
+centered on the reference.) The |B|*|dc_max| term in the merge accounts for
+the dc contribution accumulated by the first half before entering the second
+half's radius.
 
 Two table flavors:
   - BLATable     float64 coefficients, for the mid-depth kernel (<= ~1e150)
@@ -111,8 +118,9 @@ def _build_bla_level0(z_re, z_im, num_iters, dc_max, eps):
         d_{n+1} ≈ 2*Z_n * d_n + 1 * dc
     so A_1(n) = 2*Z_n, B_1(n) = 1.
 
-    Validity radius (research formula):
-        r_1(n) = max(0, (eps*|Z_{n+1}| - |B_1|*dc_max) / |A_1|)
+    Validity radius: r_1(n) = eps * |Z_n| — proportional to |Z_n| so it
+    collapses at near-zero passages where the dropped d^2 term dominates
+    (see module docstring; Z_0 = 0 naturally yields r = 0).
     """
     n = num_iters  # number of single-step entries
     a_re = np.empty(n, dtype=np.float64)
@@ -129,15 +137,8 @@ def _build_bla_level0(z_re, z_im, num_iters, dc_max, eps):
         b_re[i] = 1.0
         b_im[i] = 0.0
 
-        a_mag = math.sqrt(a_re[i] * a_re[i] + a_im[i] * a_im[i])
-        z1_mag = math.sqrt(z_re[i + 1] * z_re[i + 1] + z_im[i + 1] * z_im[i + 1])
-        if a_mag > 0.0:
-            r = (eps * z1_mag - dc_max) / a_mag
-            validity[i] = r if r > 0.0 else 0.0
-        else:
-            # A = 0 (orbit at the critical point): the dropped d^2 term is
-            # the whole step — no safe linear jump from here.
-            validity[i] = 0.0
+        z_mag = math.sqrt(z_re[i] * z_re[i] + z_im[i] * z_im[i])
+        validity[i] = eps * z_mag
 
     return a_re, a_im, b_re, b_im, validity
 
@@ -453,15 +454,10 @@ def compute_bla_table_fxp(
     b_im = np.zeros(n, dtype=np.float64)
     b_e = np.ones(n, dtype=np.int64)  # 0.5 * 2^1 = 1.0 (normalized form)
 
-    # r_1 = max(0, (eps*|Z_{n+1}| - dc_max) / |A_1|)
-    z1_m, z1_e = _vrmag(z_m_re[1:n + 1], z_m_im[1:n + 1],
-                        z_exp[1:n + 1].astype(np.int64))
-    ez_m, ez_e = _vrnorm(z1_m * eps, z1_e)
-    num_m, num_e = _vrsub_clamp0(ez_m, ez_e, dc_m_arr, dc_e_arr)
-    amag_m, amag_e = _vrmag(a_re, a_im, a_e)
-    r_m, r_e = _vrdiv(num_m, num_e, amag_m, amag_e)
-    # A = 0 entries: no valid jump
-    r_m = np.where(amag_m > 0.0, r_m, 0.0)
+    # r_1(n) = eps * |Z_n| — collapses at near-zero passages where the
+    # dropped d^2 term dominates (Z_0 = 0 naturally yields r = 0).
+    zn_m, zn_e = _vrmag(z_m_re[:n], z_m_im[:n], z_exp[:n].astype(np.int64))
+    r_m, r_e = _vrnorm(zn_m * eps, zn_e)
 
     cur = dict(a_re=a_re, a_im=a_im, a_e=a_e,
                b_re=b_re, b_im=b_im, b_e=b_e,
