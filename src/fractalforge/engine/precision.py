@@ -136,6 +136,21 @@ class ReferenceOrbit:
         return self.z_exp is not None
 
 
+# Reference-orbit cache. The orbit depends only on the center coordinate,
+# precision, and iteration budget — NOT on zoom — so repeated renders at the
+# same center (progressive preview + full-res pass, effect tweaks at depth,
+# every frame of a locked-target video dive) can reuse one orbit. A cached
+# orbit is valid for a request when it was computed at >= the required
+# precision and either escaped naturally (complete) or covers max_iter.
+_ORBIT_CACHE: dict[tuple[str, str, bool], ReferenceOrbit] = {}
+_ORBIT_CACHE_MAX = 8
+
+
+def clear_orbit_cache():
+    """Drop all cached reference orbits (mainly for tests)."""
+    _ORBIT_CACHE.clear()
+
+
 def compute_reference_orbit(
     center_re: str | float,
     center_im: str | float,
@@ -144,11 +159,18 @@ def compute_reference_orbit(
     zoom: float | str | None = None,
     escape_radius_sq: float = 256.0,
     extended: bool = False,
+    use_cache: bool = True,
 ) -> ReferenceOrbit:
     """Compute a reference orbit at arbitrary precision.
 
     Iterates Z_{n+1} = Z_n^2 + C starting from Z_0 = 0, storing every
     iterate as float64 for GPU consumption. Stops at escape or max_iter.
+
+    Results are cached per center coordinate: a cached orbit computed at
+    sufficient precision and iteration depth is returned directly, which
+    makes repeated renders at the same center (progressive passes, deep
+    video dives) skip the dominant CPU cost. Callers must treat the
+    returned orbit arrays as read-only.
 
     Args:
         center_re: Real part of reference point C. Pass as string for
@@ -162,6 +184,7 @@ def compute_reference_orbit(
         extended: Also store the orbit as floatexp triples (mantissa pair +
             shared power-of-two exponent). Required by the deep kernel where
             orbit values near minibrot passes underflow float64.
+        use_cache: Reuse/store orbits in the per-center cache.
 
     Returns:
         ReferenceOrbit with the full orbit data.
@@ -174,16 +197,35 @@ def compute_reference_orbit(
             raise ValueError("Must provide either precision or zoom")
         precision = required_precision(zoom, str(center_re), str(center_im))
 
+    key = (str(center_re), str(center_im), extended)
+    if use_cache:
+        cached = _ORBIT_CACHE.get(key)
+        if cached is not None and cached.precision >= precision:
+            complete = cached.escape_iter >= 0 or cached.num_iters >= max_iter
+            if complete:
+                # Refresh LRU position
+                _ORBIT_CACHE.pop(key, None)
+                _ORBIT_CACHE[key] = cached
+                return cached
+
     if _HAS_GMPY2:
-        return _compute_reference_orbit_gmpy2(
+        orbit = _compute_reference_orbit_gmpy2(
+            str(center_re), str(center_im), max_iter, precision,
+            escape_radius_sq, extended,
+        )
+    else:
+        orbit = _compute_reference_orbit_mpmath(
             str(center_re), str(center_im), max_iter, precision,
             escape_radius_sq, extended,
         )
 
-    return _compute_reference_orbit_mpmath(
-        str(center_re), str(center_im), max_iter, precision,
-        escape_radius_sq, extended,
-    )
+    if use_cache:
+        _ORBIT_CACHE.pop(key, None)
+        _ORBIT_CACHE[key] = orbit
+        while len(_ORBIT_CACHE) > _ORBIT_CACHE_MAX:
+            _ORBIT_CACHE.pop(next(iter(_ORBIT_CACHE)))
+
+    return orbit
 
 
 def _fxp_triple_gmpy2(z_r, z_i) -> tuple[float, float, int]:

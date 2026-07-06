@@ -780,6 +780,13 @@ def render_frame_perturbation(
     return smooth_out
 
 
+# BLA tables are deterministic given an orbit and the viewport corner |dc|;
+# progressive full-res passes and repeated tweaks at a fixed view rebuild the
+# same table, so keep a small keyed cache.
+_BLA_FXP_CACHE: dict[tuple, object] = {}
+_BLA_FXP_CACHE_MAX = 4
+
+
 def _render_deep_fxp(
     center_re_str: str,
     center_im_str: str,
@@ -825,10 +832,17 @@ def _render_deep_fxp(
         extended=True,
     )
 
-    bla_table = compute_bla_table_fxp(
-        ref.z_m_re, ref.z_m_im, ref.z_exp, ref.num_iters,
-        dc_max_m, dc_max_e,
-    )
+    bla_key = (center_re_str, center_im_str, ref.precision, ref.num_iters,
+               dc_max_m, dc_max_e)
+    bla_table = _BLA_FXP_CACHE.get(bla_key)
+    if bla_table is None:
+        bla_table = compute_bla_table_fxp(
+            ref.z_m_re, ref.z_m_im, ref.z_exp, ref.num_iters,
+            dc_max_m, dc_max_e,
+        )
+        _BLA_FXP_CACHE[bla_key] = bla_table
+        while len(_BLA_FXP_CACHE) > _BLA_FXP_CACHE_MAX:
+            _BLA_FXP_CACHE.pop(next(iter(_BLA_FXP_CACHE)))
 
     render_fn = render_gpu_deep if gpu else render_cpu_deep
     smooth_out, _ = render_fn(

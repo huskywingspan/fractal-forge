@@ -25,13 +25,21 @@ def auto_max_iter(log10_zoom: float, user_max_iter: int, auto: bool = True) -> i
     the perturbation threshold the dominant cost is embedded-Julia escape depth,
     which grows only modestly with log-zoom, so we use a gentler 60/decade to
     keep extreme renders tractable.
+
+    The result is quantized upward to coarse steps so that consecutive zoom
+    levels share the same iteration budget — this is what lets the
+    reference-orbit cache hit while click-zooming into a fixed point
+    (a continuously growing max_iter would invalidate the orbit every step).
     """
     if not auto or log10_zoom <= 0.0:
         return user_max_iter
     if log10_zoom < DEEP_FXP_LOG10:
         floor = int(500 + 300 * log10_zoom)
+        step = 1000
     else:
         floor = int(2000 + 60 * log10_zoom)
+        step = 2000
+    floor = ((floor + step - 1) // step) * step
     return max(user_max_iter, floor)
 
 
@@ -100,10 +108,11 @@ def _do_render(state: ViewerState, scale: float = 1.0) -> tuple[np.ndarray, floa
         use_gpu=True,
     )
 
-    # Upsample a reduced-scale render back to the preview size (nearest keeps
-    # it fast and crisp; the full-res pass replaces it shortly after).
+    # Upsample a reduced-scale render back to the preview size. Bilinear
+    # looks far less blocky than nearest during interaction; the full-res
+    # pass replaces it as soon as the view settles.
     if (render_w, render_h) != (out_w, out_h):
-        img = img.resize((out_w, out_h), Image.NEAREST)
+        img = img.resize((out_w, out_h), Image.BILINEAR)
 
     elapsed_ms = (time.perf_counter() - start) * 1000.0
 
