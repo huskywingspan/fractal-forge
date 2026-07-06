@@ -678,3 +678,47 @@ Infinite Descent channel.
 
 **Validation:** end-to-end 36-frame 9:16 dive to 1e30 with full effects
 rendered + encoded in 28s; preset combos verified programmatically.
+
+---
+
+### AD-021: Rebasing Is Not an Iteration (Blocky Seam Fix)
+
+**Date:** 2026-07-05
+**Decision:** Rebases must never advance the escape-time counter
+(`total` / `total_iters`) in any kernel.
+
+**Problem:** User testing showed blocky sectioned rendering at depth that
+*survived turning histogram EQ off* — proving the discontinuities were in the
+smooth iteration data, not the coloring (partially correcting AD-018, which
+attributed the artifact 100% to coloring; the coloring posterization was real
+but was only half of it). Every kernel with proactive rebasing did
+`total += 1; continue` on rebase. A rebase re-expresses the *same* z_n against
+reference index 0 — the fractal iteration does not advance — so each rebase
+inflated the pixel's reported escape time by +1. Rebasing is a discrete event
+tied to orbit topology, so neighboring pixels share rebase counts in patches:
+the smooth field was offset by an integer per patch → internally-smooth blocks
+with hard geometric seams.
+
+**Why the earlier A/B missed it:** BLA-vs-single-step compared two paths that
+share the rebase logic — identical inflation on both sides, diff 0.0000. The
+ground-truth check against plain float64 *did* catch it: "exterior diff
+median = 3.0000" — an exact integer (three rebases of inflation) that was
+misread as chaotic filament noise.
+
+**Fix:** remove the increment from the rebase branch in all six kernels
+(fxp CUDA/CPU, perturbation CUDA/CPU, BLA CUDA/CPU). Termination stays safe:
+after a rebase, iteration = 0 and Z_0 = 0 makes full == d, so the rebase
+trigger |Z+d| < |d| cannot fire twice in a row — every other loop pass does
+real work that advances `total`. Degenerate empty-orbit guard added (the
+forced end-of-orbit rebase could otherwise spin).
+
+**Validation:** ground-truth median diff collapsed 3.0000 → 0.0000
+(p99 = 0.000); deep frames at 1e100 render as continuous flowing bands with
+zero seams; c = i escape ranges still scale correctly to 1e300. Permanent
+regression: `tests/test_deep_groundtruth.py`.
+
+**Lesson (LL-009):** An A/B test only isolates what *differs* between its two
+arms. BLA-vs-exact shared the rebase accounting, so a rebase bug was invisible
+to it — always keep one arm that is a fully independent implementation (plain
+float64 ground truth). And treat suspiciously exact integer medians (3.0000)
+as signal, never noise: continuous processes don't produce integer offsets.

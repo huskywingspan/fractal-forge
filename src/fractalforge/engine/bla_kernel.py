@@ -87,13 +87,14 @@ def _perturbation_bla_cuda(
             smooth_out[x, y] = float(total_iters) + 1.0 - nu
             return
 
-        # DZ-P1-03: Proactive rebasing (deep zoom only)
+        # DZ-P1-03: Proactive rebasing (deep zoom only).
+        # Not an iteration — do not advance total_iters, or patches of
+        # pixels shift by their rebase count (blocky seams).
         d_mag_sq = d_re * d_re + d_im * d_im
         if enable_rebasing and full_mag_sq < d_mag_sq:
             d_re = full_re
             d_im = full_im
             iteration = 0
-            total_iters += 1
             continue
 
         # Glitch detection (safety net)
@@ -240,13 +241,13 @@ def _perturbation_bla_cpu(
                     escaped = True
                     break
 
-                # DZ-P1-03: Proactive rebasing (deep zoom only)
+                # DZ-P1-03: Proactive rebasing (deep zoom only).
+                # Not an iteration — do not advance total_iters (see above).
                 d_mag_sq = d_re * d_re + d_im * d_im
                 if enable_rebasing and full_mag_sq < d_mag_sq:
                     d_re = full_re
                     d_im = full_im
                     iteration = 0
-                    total_iters += 1
                     continue
 
                 # Glitch detection (safety net)

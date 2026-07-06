@@ -65,6 +65,12 @@ def _make_cuda_kernel():
         if x >= height or y >= width:
             return
 
+        # Degenerate orbit: nothing to iterate against, and the forced
+        # end-of-orbit rebase would spin without advancing `total`.
+        if ref_num_iters < 1:
+            smooth_out[x, y] = -1.0
+            return
+
         # Per-pixel dc: mantissas share the frame exponent
         dc_re, dc_im, dc_e = dfx_norm(
             dc_min_m_re + y * dc_step_m_re,
@@ -94,12 +100,18 @@ def _make_cuda_kernel():
             # Proactive rebasing: |Z_n + d| < |d| means cancellation is
             # imminent — fold to the absolute orbit (exact substitution).
             # Also forced when the reference orbit is exhausted.
+            # A rebase re-expresses the SAME z_n against reference index 0 —
+            # it is not an iteration, so `total` (the escape-time counter used
+            # for coloring) must not advance. Counting it shifted patches of
+            # pixels by their integer rebase count, producing blocky seams.
+            # Termination is safe without it: Z_0 = 0 makes full == d at the
+            # next pass, so a rebase can never fire twice in a row and every
+            # other pass advances `total`.
             if iteration >= ref_num_iters or dfx_mag_lt(
                 full_re, full_im, full_e, d_re, d_im, d_e
             ):
                 d_re, d_im, d_e = full_re, full_im, full_e
                 iteration = 0
-                total += 1
                 continue
 
             # Try BLA jumps from the largest stored level down
@@ -179,6 +191,12 @@ def _deep_cpu(
 ):
     smooth_out = np.empty((height, width), dtype=np.float64)
 
+    # Degenerate orbit: the forced end-of-orbit rebase would spin without
+    # advancing `total`.
+    if ref_num_iters < 1:
+        smooth_out[:, :] = -1.0
+        return smooth_out
+
     for x in prange(height):
         for y in range(width):
             dc_re, dc_im, dc_e = fx_norm(
@@ -207,12 +225,12 @@ def _deep_cpu(
                         resolved = True
                         break
 
+                # Rebase is bookkeeping, not an iteration — see CUDA kernel.
                 if iteration >= ref_num_iters or fx_mag_lt(
                     full_re, full_im, full_e, d_re, d_im, d_e
                 ):
                     d_re, d_im, d_e = full_re, full_im, full_e
                     iteration = 0
-                    total += 1
                     continue
 
                 d_l2 = 0.5 * fx_mag_sq_log2(d_re, d_im, d_e)

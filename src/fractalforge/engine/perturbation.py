@@ -240,12 +240,15 @@ def _perturbation_cuda(
         # DZ-P1-03: Proactive rebasing (only at deep zoom where deltas are tiny)
         # When |Z_n + d_n| < |d_n|, the orbit nears 0 and cancellation is imminent.
         # Fold the delta back: d = Z+d, restart reference from iteration 0.
+        # Rebasing is bookkeeping, not an iteration: total_iters must NOT
+        # advance or patches of pixels shift by their rebase count (blocky
+        # seams). Z_0 = 0 prevents back-to-back rebases, so the loop still
+        # terminates.
         d_mag_sq = d_re * d_re + d_im * d_im
         if enable_rebasing and full_mag_sq < d_mag_sq:
             d_re = full_re
             d_im = full_im
             iteration = 0
-            total_iters += 1
             continue
 
         # P3-03: Glitch detection (safety net, most issues caught by rebasing)
@@ -369,13 +372,13 @@ def _perturbation_cpu(
                     escaped = True
                     break
 
-                # DZ-P1-03: Proactive rebasing (deep zoom only)
+                # DZ-P1-03: Proactive rebasing (deep zoom only).
+                # Not an iteration — do not advance total_iters (see CUDA).
                 d_mag_sq = d_re * d_re + d_im * d_im
                 if enable_rebasing and full_mag_sq < d_mag_sq:
                     d_re = full_re
                     d_im = full_im
                     iteration = 0
-                    total_iters += 1
                     continue
 
                 # Glitch detection (safety net, skip near-zero orbit points)
