@@ -169,7 +169,23 @@
 | DZ-P3-02 | log10 exponential zoom interpolation past 1e307 | ✅ Done | legacy + cinematic interp in log10; result carries `log10_zoom`; zoom emitted as string when > 1e300 |
 | DZ-P3-03 | Viewer video panel: unbounded target zoom | ✅ Done | uses `state.zoom_str`; depth-scaled end max_iter |
 | DZ-P3-05 | Sequence dispatch + CLI/preview deep-safe | ✅ Done | engine dispatch on `log10_zoom`; zoom-cmd, thumbnail, camera-path labels deep-safe; `tests/test_deep_video.py` |
-| DZ-P3-04 | Distance-estimation coloring for deep frames | 🔲 Todo | reduce histogram banding at depth |
+| DZ-P3-04 | Distance-estimation coloring for deep frames | 🔲 Optional | banding at depth FIXED by continuous EQ (CW-01); DE coloring remains a nice-to-have texture upgrade |
+
+## Sprint CW: Creator Workflow (Explore -> Style -> Render)
+
+*Goal: Flawless deep exploration + streamlined YouTube output. (2026-07-05)*
+
+| ID | Item | Status | Notes |
+|----|------|--------|-------|
+| CW-01 | Fix deep artifact banding: continuous (interpolated-CDF) histogram EQ | ✅ Done | root-caused via BLA A/B (engine exact, median diff 0.0000); AD-018 / LL-008 |
+| CW-02 | `normalize_range` glow mapping + `color_mode` end to end | ✅ Done | default / histogram / normalized; real-time viewer combo |
+| CW-03 | Reference-orbit LRU cache (per center, sufficiency checks) | ✅ Done | 42x same-view, 13x zoom-step at 1e300; `tests/test_orbit_cache.py` |
+| CW-04 | Deep BLA table cache + quantized auto_max_iter | ✅ Done | quantization keeps orbit cache valid across zoom steps |
+| CW-05 | Format x Quality video presets (Long/Shorts/Ultrawide x Draft/Std/Prod) | ✅ Done | Shorts native 1080x1920, <60s default; presets set, never lock |
+| CW-06 | WYSIWYG effects passthrough to video renders | ✅ Done | full live look (color mode, HDR, grade) snapshotted per render |
+| CW-07 | Live HDR in viewer (bloom/halation/tone map/exposure) | ✅ Done | scaled bloom radius on progressive pass |
+| CW-08 | Shuffle Style randomizer + Reset | ✅ Done | look-only, safe mid-dive |
+| CW-09 | Bilinear progressive upscale | ✅ Done | replaces blocky nearest during interaction |
 
 ## Phase 5: Production & Scaling
 

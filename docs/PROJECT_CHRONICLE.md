@@ -603,3 +603,78 @@ coordinate with enough digits for the *final* depth (≈ `1.5*log10(zoom)+30`).
 The interpolator requests precision per frame; a coordinate truncated to fewer
 digits silently lands in a featureless interior region at depth. The viewer
 accumulates this precision automatically as you zoom; presets must supply it.
+
+---
+
+### AD-018: Continuous Histogram EQ + Color Modes (Deep Artifact Fix)
+
+**Date:** 2026-07-05
+**Decision:** Replace the step-function histogram equalization with a
+piecewise-linear (interpolated) CDF, and expose the value→palette mapping as a
+selectable `color_mode` ("default" / "histogram" / "normalized").
+
+**Root cause analysis:** User testing reported "glitchy deep exploration with
+visual artifacts" (posterized polygon shards). An A/B isolation showed:
+
+- BLA jumps vs. exact floatexp single-stepping: **median smooth-value diff
+  0.0000** — the engine math was exact.
+- The smooth field itself was continuous (median |gradient| 0.008).
+- `histogram_equalize` mapped every pixel in a bin to a single CDF value. At
+  depth, the narrow iteration range concentrates thousands of pixels per bin,
+  so adjacent bins carried large CDF jumps → hard color steps along iteration
+  contours. 100% a coloring bug.
+
+**Changes:** interpolated CDF (continuous, monotone — smooth gradients stay
+smooth); new `normalize_range` mapping (linear percentile sweep, dark glowing
+look); `color_mode` threaded engine→renderer→viewer with a real-time combo.
+
+**Lesson (LL-008):** When deep frames look wrong, A/B the pipeline *stages*
+(kernel output vs. colored output) before blaming the kernel. The floatexp
+engine was flawless; the last 5% of visual quality lived in the color mapping.
+
+---
+
+### AD-019: Reference Orbit + BLA Table Caching
+
+**Date:** 2026-07-05
+**Decision:** Cache reference orbits per center coordinate (LRU, sufficiency
+checks on precision and iteration budget) and deep BLA tables per
+(orbit, corner-|dc|) key.
+
+**Why:** The orbit depends only on the center — not zoom — yet was recomputed
+for every render: twice per interaction (progressive preview + full pass), on
+every effect tweak, and per frame of a locked-target dive. A cached orbit is
+valid when computed at ≥ required precision and either escaped naturally
+(complete) or covers the requested max_iter. `auto_max_iter` is quantized to
+coarse steps so consecutive zoom levels share an iteration budget — a
+continuously growing max_iter invalidated the cache every step.
+
+**Measured (1e300, 20k iters, 640×360):** cold 960ms → same-view re-render
+**23ms (42×)**, 2× zoom step at same center **72ms (13×)**. This is what makes
+click-through deep exploration feel real-time.
+
+---
+
+### AD-020: Creator Workflow — Presets, Live HDR, Style Shuffle
+
+**Date:** 2026-07-05
+**Decision:** Make the viewer a one-stop explore→style→render tool for the
+Infinite Descent channel.
+
+1. **Format × Quality presets** in the video panel: YouTube Long (16:9),
+   YouTube Shorts (9:16, *native* 1080×1920 — no crop), Ultrawide (32:9) ×
+   Draft / Standard / Production. Presets drive resolution, SSAA, and encode
+   preset; every widget stays editable ("presets set values, never lock them").
+2. **WYSIWYG renders:** the video worker snapshots the complete live look
+   (color mode, bloom, halation, tone map, exposure, vignette, grade) and
+   `render_sequence` applies it per frame. What you tuned while exploring is
+   exactly what renders.
+3. **Live HDR:** bloom / halation / tone map / exposure in viewer state with
+   real-time sliders; preview bloom radius scales with the progressive pass so
+   draft matches full-res.
+4. **Shuffle Style:** one click rolls a tasteful random look (palette, color
+   mode, shading, grade, HDR) for inspiration; Reset returns to neutral.
+   Look-only — never touches position/zoom, so it is always safe mid-dive.
+
+**Validation:** end-to-end 36-frame 9:16 dive to 1e30 with full effects
+rendered + encoded in 28s; preset combos verified programmatically.
