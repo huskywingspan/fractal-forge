@@ -36,6 +36,13 @@ def render_sequence(
     contrast: float = 1.0,
     saturation: float = 1.0,
     brightness: float = 1.0,
+    bloom: float = 0.0,
+    bloom_threshold: float = 0.6,
+    bloom_radius: float = 20.0,
+    halation: float = 0.0,
+    tone_map: str = "none",
+    exposure: float = 1.0,
+    color_mode: str | None = None,
 ) -> list[Path]:
     """Render all frames in a zoom path to individual PNG files.
 
@@ -51,6 +58,14 @@ def render_sequence(
         contrast: Contrast multiplier (1.0=unchanged).
         saturation: Saturation multiplier (1.0=unchanged).
         brightness: Brightness multiplier (1.0=unchanged).
+        bloom: HDR bloom intensity (0.0=off).
+        bloom_threshold: Brightness threshold for bloom extraction.
+        bloom_radius: Bloom blur radius in pixels.
+        halation: Film halation intensity (0.0=off).
+        tone_map: Tone mapping operator ("none", "aces", "reinhard").
+        exposure: Exposure multiplier for tone mapping.
+        color_mode: Palette mapping ("default" | "histogram" | "normalized");
+            None falls back to the histogram flag.
 
     Returns:
         List of output file paths in frame order.
@@ -155,16 +170,25 @@ def render_sequence(
             slope_shading=slope_shading,
             cycle_offset=cycle_offset,
             log_scaling=log_scaling,
+            color_mode=color_mode,
         )
 
         # Downsample if supersampled
         if ss > 1:
             img = img.resize((zoom_path.width, zoom_path.height), Image.LANCZOS)
 
-        # Post-processing (vignette, color grading)
-        if vignette > 0 or contrast != 1.0 or saturation != 1.0 or brightness != 1.0:
+        # Post-processing (color grading, HDR bloom, halation, tone mapping)
+        if (vignette > 0 or contrast != 1.0 or saturation != 1.0
+                or brightness != 1.0 or bloom > 0 or halation > 0
+                or tone_map != "none"):
             from fractalforge.engine.postprocess import postprocess
-            img = postprocess(img, vignette, contrast, saturation, brightness)
+            img = postprocess(
+                img, vignette=vignette, contrast=contrast,
+                saturation=saturation, brightness=brightness,
+                bloom=bloom, bloom_threshold=bloom_threshold,
+                bloom_radius=bloom_radius, halation=halation,
+                tone_map=tone_map, exposure=exposure,
+            )
 
         img.save(frame_path, format="PNG")
         rendered_count += 1

@@ -20,9 +20,39 @@ RESOLUTIONS = {
     "2560x1440 (1440p)": (2560, 1440),
     "3840x2160 (4K)": (3840, 2160),
     "5120x1440 (Ultrawide)": (5120, 1440),
+    "2560x720 (UW draft)": (2560, 720),
+    "720x1280 (Shorts draft)": (720, 1280),
+    "1080x1920 (Shorts 9:16)": (1080, 1920),
 }
 
 PRESETS = ["preview", "quality", "youtube", "lossless"]
+
+# Creator presets: Format picks the aspect/venue, Quality picks the
+# speed/fidelity tradeoff. Together they drive resolution, SSAA, and the
+# encode preset — every widget stays editable afterwards, presets just set
+# sensible values.
+FORMATS = ["YouTube Long (16:9)", "YouTube Shorts (9:16)", "Ultrawide (32:9)"]
+QUALITIES = ["Draft", "Standard", "Production"]
+
+# (resolution key, ssaa widget value, encode preset)
+_PRESET_MATRIX = {
+    ("YouTube Long (16:9)", "Draft"): ("1280x720 (720p)", "1 (none)", "preview"),
+    ("YouTube Long (16:9)", "Standard"): ("1920x1080 (1080p)", "1 (none)", "quality"),
+    ("YouTube Long (16:9)", "Production"): ("3840x2160 (4K)", "2 (4x SSAA)", "youtube"),
+    ("YouTube Shorts (9:16)", "Draft"): ("720x1280 (Shorts draft)", "1 (none)", "preview"),
+    ("YouTube Shorts (9:16)", "Standard"): ("1080x1920 (Shorts 9:16)", "1 (none)", "quality"),
+    ("YouTube Shorts (9:16)", "Production"): ("1080x1920 (Shorts 9:16)", "2 (4x SSAA)", "youtube"),
+    ("Ultrawide (32:9)", "Draft"): ("2560x720 (UW draft)", "1 (none)", "preview"),
+    ("Ultrawide (32:9)", "Standard"): ("5120x1440 (Ultrawide)", "1 (none)", "quality"),
+    ("Ultrawide (32:9)", "Production"): ("5120x1440 (Ultrawide)", "2 (4x SSAA)", "youtube"),
+}
+
+# Default duration when switching format (Shorts must stay under 60s)
+_FORMAT_DURATION = {
+    "YouTube Long (16:9)": 60,
+    "YouTube Shorts (9:16)": 45,
+    "Ultrawide (32:9)": 60,
+}
 
 
 class VideoRenderPanel:
@@ -43,6 +73,25 @@ class VideoRenderPanel:
             dpg.add_text("Video Render", color=(0, 212, 255))
             dpg.add_separator()
 
+            dpg.add_text("Format")
+            dpg.add_combo(
+                items=FORMATS,
+                default_value=FORMATS[0],
+                tag="video_format",
+                width=-1,
+                callback=self._on_preset_change,
+            )
+            dpg.add_text("Quality")
+            dpg.add_combo(
+                items=QUALITIES,
+                default_value="Standard",
+                tag="video_quality",
+                width=-1,
+                callback=self._on_preset_change,
+            )
+
+            dpg.add_spacer(height=4)
+            dpg.add_separator()
             dpg.add_text("Output Resolution")
             dpg.add_combo(
                 items=list(RESOLUTIONS.keys()),
@@ -191,37 +240,67 @@ class VideoRenderPanel:
             if self._progress >= 1.0:
                 dpg.configure_item("video_progress", show=True)
 
+    def _on_preset_change(self, sender=None, app_data=None):
+        """Apply the Format x Quality preset to the concrete widgets."""
+        fmt = dpg.get_value("video_format")
+        quality = dpg.get_value("video_quality")
+        entry = _PRESET_MATRIX.get((fmt, quality))
+        if entry is None:
+            return
+        res_key, ssaa_val, encode = entry
+        dpg.set_value("video_resolution", res_key)
+        dpg.set_value("video_ssaa", ssaa_val)
+        dpg.set_value("video_preset", encode)
+        if sender == "video_format":
+            dpg.set_value("video_duration", _FORMAT_DURATION.get(fmt, 60))
+
     def _on_render(self, sender=None, app_data=None):
         """Start video render in background thread."""
         if self._rendering:
             return
 
-        # Gather settings
         res_key = dpg.get_value("video_resolution")
         width, height = RESOLUTIONS.get(res_key, (1920, 1080))
-        duration = dpg.get_value("video_duration")
-        fps = int(dpg.get_value("video_fps"))
-        preset = dpg.get_value("video_preset")
         ssaa_key = dpg.get_value("video_ssaa")
-        ssaa = 2 if "2" in ssaa_key else 1
-        histogram = dpg.get_value("video_histogram")
-        slope_shading = dpg.get_value("video_slope_shading")
-        log_scaling = dpg.get_value("video_log_scaling")
-        cycle_speed = dpg.get_value("video_cycle_speed")
 
-        # Snapshot viewer state for the target. Use zoom_str (deep-safe) so the
-        # target keyframe can exceed float64's 1e308 ceiling for deep-zoom video.
-        target_re_hp = self.state.center_re_hp
-        target_im_hp = self.state.center_im_hp
-        target_re = self.state.center_re
-        target_im = self.state.center_im
-        target_zoom = self.state.zoom_str
-        target_log10 = self.state.log10_zoom
-        target_max_iter = self.state.max_iter
-        palette = self.state.palette_name
-        fractal_type = self.state.fractal_type
-        julia_re = self.state.julia_re
-        julia_im = self.state.julia_im
+        # Full snapshot: render settings from the panel widgets, target and
+        # LOOK from the live viewer state -- what you see while exploring is
+        # exactly what the video renders. zoom_str is deep-safe (can exceed
+        # float64's 1e308 ceiling).
+        s = self.state
+        cfg = {
+            "width": width,
+            "height": height,
+            "duration": dpg.get_value("video_duration"),
+            "fps": int(dpg.get_value("video_fps")),
+            "preset": dpg.get_value("video_preset"),
+            "ssaa": 2 if "2" in ssaa_key else 1,
+            "histogram": dpg.get_value("video_histogram"),
+            "slope_shading": dpg.get_value("video_slope_shading"),
+            "log_scaling": dpg.get_value("video_log_scaling"),
+            "cycle_speed": dpg.get_value("video_cycle_speed"),
+            "target_re": s.center_re,
+            "target_im": s.center_im,
+            "target_re_hp": s.center_re_hp,
+            "target_im_hp": s.center_im_hp,
+            "target_zoom": s.zoom_str,
+            "target_log10": s.log10_zoom,
+            "target_max_iter": s.max_iter,
+            "palette": s.palette_name,
+            "fractal_type": s.fractal_type,
+            "julia_re": s.julia_re,
+            "julia_im": s.julia_im,
+            # Look: everything you tuned live carries into the render
+            "color_mode": None if s.color_mode == "auto" else s.color_mode,
+            "vignette": s.vignette,
+            "contrast": s.contrast,
+            "saturation": s.saturation,
+            "brightness": s.brightness,
+            "bloom": s.bloom,
+            "halation": s.halation,
+            "tone_map": s.tone_map,
+            "exposure": s.exposure,
+        }
 
         self._cancel_flag.clear()
         self._rendering = True
@@ -229,15 +308,7 @@ class VideoRenderPanel:
         self._status_text = "Preparing..."
 
         self._worker_thread = threading.Thread(
-            target=self._render_worker,
-            args=(
-                width, height, duration, fps, preset, ssaa, histogram,
-                slope_shading, log_scaling, cycle_speed,
-                target_re, target_im, target_re_hp, target_im_hp,
-                target_zoom, target_log10, target_max_iter, palette,
-                fractal_type, julia_re, julia_im,
-            ),
-            daemon=True,
+            target=self._render_worker, args=(cfg,), daemon=True,
         )
         self._worker_thread.start()
 
@@ -246,14 +317,29 @@ class VideoRenderPanel:
         self._cancel_flag.set()
         self._status_text = "Cancelling..."
 
-    def _render_worker(
-        self, width, height, duration, fps, preset, ssaa, histogram,
-        slope_shading, log_scaling, cycle_speed,
-        target_re, target_im, target_re_hp, target_im_hp,
-        target_zoom, target_log10, target_max_iter, palette,
-        fractal_type, julia_re, julia_im,
-    ):
+    def _render_worker(self, cfg: dict):
         """Background thread: render frames + encode video."""
+        width = cfg["width"]
+        height = cfg["height"]
+        duration = cfg["duration"]
+        fps = cfg["fps"]
+        preset = cfg["preset"]
+        ssaa = cfg["ssaa"]
+        histogram = cfg["histogram"]
+        slope_shading = cfg["slope_shading"]
+        log_scaling = cfg["log_scaling"]
+        cycle_speed = cfg["cycle_speed"]
+        target_re = cfg["target_re"]
+        target_im = cfg["target_im"]
+        target_re_hp = cfg["target_re_hp"]
+        target_im_hp = cfg["target_im_hp"]
+        target_zoom = cfg["target_zoom"]
+        target_log10 = cfg["target_log10"]
+        target_max_iter = cfg["target_max_iter"]
+        palette = cfg["palette"]
+        fractal_type = cfg["fractal_type"]
+        julia_re = cfg["julia_re"]
+        julia_im = cfg["julia_im"]
         from fractalforge.artist.zoompath import ZoomPath, Keyframe
         from fractalforge.render.sequence import render_sequence
         from fractalforge.render.video import encode_video, check_ffmpeg
@@ -337,6 +423,15 @@ class VideoRenderPanel:
                 slope_shading=slope_shading,
                 cycle_speed=cycle_speed,
                 log_scaling=log_scaling,
+                color_mode=cfg["color_mode"],
+                vignette=cfg["vignette"],
+                contrast=cfg["contrast"],
+                saturation=cfg["saturation"],
+                brightness=cfg["brightness"],
+                bloom=cfg["bloom"],
+                halation=cfg["halation"],
+                tone_map=cfg["tone_map"],
+                exposure=cfg["exposure"],
             )
 
             if self._cancel_flag.is_set():

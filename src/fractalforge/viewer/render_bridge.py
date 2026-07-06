@@ -104,6 +104,13 @@ def _do_render(state: ViewerState, scale: float = 1.0) -> tuple[np.ndarray, floa
         contrast=state.contrast,
         saturation=state.saturation,
         brightness=state.brightness,
+        bloom=state.bloom,
+        # Scale the bloom radius with the render scale so the reduced-scale
+        # interaction pass looks like the full-res pass.
+        bloom_radius=max(4.0, 20.0 * scale),
+        halation=state.halation,
+        tone_map=state.tone_map,
+        exposure=state.exposure,
         supersampling=1,
         use_gpu=True,
     )

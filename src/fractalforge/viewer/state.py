@@ -58,6 +58,12 @@ class ViewerState:
     # shallow. Explicit: "default" | "histogram" | "normalized" (glow).
     color_mode: str = "auto"
 
+    # HDR effects (previewed live; carried into video renders)
+    bloom: float = 0.0
+    halation: float = 0.0
+    tone_map: str = "none"  # none | aces | reinhard
+    exposure: float = 1.0
+
     # Auto max-iter: automatically scale iterations with zoom depth
     auto_max_iter: bool = True
 
@@ -146,6 +152,41 @@ class ViewerState:
         """Return to the default home view."""
         self.set_center_float(-0.75, 0.0)
         self.log10_zoom = 0.0
+        self.request_render()
+
+    def randomize_style(self, palettes: list[str]):
+        """Roll a random visual style within tasteful ranges (inspiration).
+
+        Touches only look parameters — never position/zoom/iterations — so
+        it is always safe to spam while exploring.
+        """
+        import random
+
+        self.palette_name = random.choice(palettes)
+        self.color_mode = random.choice(["auto", "auto", "histogram", "normalized"])
+        self.slope_shading = random.random() < 0.5
+        self.vignette = round(random.choice([0.0, random.uniform(0.10, 0.35)]), 2)
+        self.contrast = round(random.uniform(0.90, 1.30), 2)
+        self.saturation = round(random.uniform(0.90, 1.40), 2)
+        self.brightness = round(random.uniform(0.95, 1.15), 2)
+        self.bloom = round(random.choice([0.0, random.uniform(0.15, 0.50)]), 2)
+        self.halation = round(random.choice([0.0, random.uniform(0.08, 0.25)]), 2)
+        self.tone_map = random.choice(["none", "aces", "aces", "reinhard"])
+        self.exposure = round(random.uniform(0.90, 1.25), 2)
+        self.request_render()
+
+    def reset_style(self):
+        """Return all look parameters to neutral defaults."""
+        self.color_mode = "auto"
+        self.slope_shading = False
+        self.vignette = 0.0
+        self.contrast = 1.0
+        self.saturation = 1.0
+        self.brightness = 1.0
+        self.bloom = 0.0
+        self.halation = 0.0
+        self.tone_map = "none"
+        self.exposure = 1.0
         self.request_render()
 
     def request_render(self):

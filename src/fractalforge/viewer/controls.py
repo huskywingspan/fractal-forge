@@ -61,12 +61,20 @@ class ControlPanel:
                 )
                 dpg.add_separator()
 
+            dpg.add_text("Style")
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Shuffle Style", callback=self._on_shuffle,
+                               width=120)
+                dpg.add_button(label="Reset", callback=self._on_reset_style,
+                               width=76)
+
             dpg.add_text("Palette")
             dpg.add_combo(
                 items=PALETTE_NAMES,
                 default_value=self.state.palette_name,
                 callback=self._on_palette,
                 width=200,
+                tag="palette_combo",
             )
 
             dpg.add_text("Color Mapping")
@@ -111,11 +119,13 @@ class ControlPanel:
                 label="Histogram EQ",
                 default_value=self.state.histogram,
                 callback=self._on_histogram,
+                tag="histogram_cb",
             )
             dpg.add_checkbox(
                 label="Slope Shading (3D)",
                 default_value=self.state.slope_shading,
                 callback=self._on_slope_shading,
+                tag="slope_cb",
             )
             dpg.add_slider_float(
                 label="Vignette",
@@ -123,6 +133,7 @@ class ControlPanel:
                 min_value=0.0, max_value=1.0,
                 callback=self._on_vignette,
                 width=200,
+                tag="vignette_slider",
             )
             dpg.add_slider_float(
                 label="Contrast",
@@ -130,6 +141,7 @@ class ControlPanel:
                 min_value=0.5, max_value=2.0,
                 callback=self._on_contrast,
                 width=200,
+                tag="contrast_slider",
             )
             dpg.add_slider_float(
                 label="Saturation",
@@ -137,6 +149,7 @@ class ControlPanel:
                 min_value=0.0, max_value=2.0,
                 callback=self._on_saturation,
                 width=200,
+                tag="saturation_slider",
             )
             dpg.add_slider_float(
                 label="Brightness",
@@ -144,6 +157,42 @@ class ControlPanel:
                 min_value=0.5, max_value=2.0,
                 callback=self._on_brightness,
                 width=200,
+                tag="brightness_slider",
+            )
+
+            dpg.add_separator()
+            dpg.add_text("HDR Effects")
+            dpg.add_slider_float(
+                label="Bloom",
+                default_value=self.state.bloom,
+                min_value=0.0, max_value=1.0,
+                callback=self._on_bloom,
+                width=200,
+                tag="bloom_slider",
+            )
+            dpg.add_slider_float(
+                label="Halation",
+                default_value=self.state.halation,
+                min_value=0.0, max_value=0.5,
+                callback=self._on_halation,
+                width=200,
+                tag="halation_slider",
+            )
+            dpg.add_combo(
+                items=["none", "aces", "reinhard"],
+                default_value=self.state.tone_map,
+                label="Tone Map",
+                callback=self._on_tone_map,
+                width=200,
+                tag="tonemap_combo",
+            )
+            dpg.add_slider_float(
+                label="Exposure",
+                default_value=self.state.exposure,
+                min_value=0.5, max_value=2.0,
+                callback=self._on_exposure,
+                width=200,
+                tag="exposure_slider",
             )
 
     def _on_fractal_type(self, sender, app_data):
@@ -193,6 +242,51 @@ class ControlPanel:
     def _on_vignette(self, sender, app_data):
         self.state.vignette = app_data
         self.state.request_render()
+
+    def _on_bloom(self, sender, app_data):
+        self.state.bloom = app_data
+        self.state.request_render()
+
+    def _on_halation(self, sender, app_data):
+        self.state.halation = app_data
+        self.state.request_render()
+
+    def _on_tone_map(self, sender, app_data):
+        self.state.tone_map = app_data
+        self.state.request_render()
+
+    def _on_exposure(self, sender, app_data):
+        self.state.exposure = app_data
+        self.state.request_render()
+
+    def _on_shuffle(self):
+        """Roll a random visual style and sync the widgets."""
+        self.state.randomize_style(PALETTE_NAMES)
+        self._sync_style_widgets()
+
+    def _on_reset_style(self):
+        """Reset all look parameters to neutral and sync the widgets."""
+        self.state.reset_style()
+        self._sync_style_widgets()
+
+    def _sync_style_widgets(self):
+        """Push current state style values into the UI widgets."""
+        s = self.state
+        for tag, value in (
+            ("palette_combo", s.palette_name),
+            ("color_mode_combo", s.color_mode),
+            ("slope_cb", s.slope_shading),
+            ("vignette_slider", s.vignette),
+            ("contrast_slider", s.contrast),
+            ("saturation_slider", s.saturation),
+            ("brightness_slider", s.brightness),
+            ("bloom_slider", s.bloom),
+            ("halation_slider", s.halation),
+            ("tonemap_combo", s.tone_map),
+            ("exposure_slider", s.exposure),
+        ):
+            if dpg.does_item_exist(tag):
+                dpg.set_value(tag, value)
 
     def _on_contrast(self, sender, app_data):
         self.state.contrast = app_data
