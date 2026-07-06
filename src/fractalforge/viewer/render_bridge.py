@@ -76,6 +76,7 @@ def _do_render(state: ViewerState, scale: float = 1.0) -> tuple[np.ndarray, floa
     # Auto-enable histogram EQ at deep zoom -- the narrow iteration band would
     # otherwise map to a single flat color.
     use_histogram = state.histogram or state.needs_perturbation
+    color_mode = None if state.color_mode == "auto" else state.color_mode
 
     img = render_single(
         center_re=center_re,
@@ -89,6 +90,7 @@ def _do_render(state: ViewerState, scale: float = 1.0) -> tuple[np.ndarray, floa
         julia_re=state.julia_re if state.fractal_type == "julia" else None,
         julia_im=state.julia_im if state.fractal_type == "julia" else None,
         histogram=use_histogram,
+        color_mode=color_mode,
         slope_shading=state.slope_shading,
         vignette=state.vignette,
         contrast=state.contrast,

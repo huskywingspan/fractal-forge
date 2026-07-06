@@ -69,6 +69,15 @@ class ControlPanel:
                 width=200,
             )
 
+            dpg.add_text("Color Mapping")
+            dpg.add_combo(
+                items=["auto", "default", "histogram", "normalized"],
+                default_value=self.state.color_mode,
+                callback=self._on_color_mode,
+                width=200,
+                tag="color_mode_combo",
+            )
+
             dpg.add_separator()
             dpg.add_text("Max Iterations")
             dpg.add_input_int(
@@ -153,6 +162,10 @@ class ControlPanel:
 
     def _on_palette(self, sender, app_data):
         self.state.palette_name = app_data
+        self.state.request_render()
+
+    def _on_color_mode(self, sender, app_data):
+        self.state.color_mode = app_data
         self.state.request_render()
 
     def _on_max_iter(self, sender, app_data):

@@ -16,10 +16,17 @@ def histogram_equalize(
     palette_len: int,
     num_bins: int = 4096,
 ) -> np.ndarray:
-    """Remap smooth iteration counts via histogram equalization.
+    """Remap smooth iteration counts via continuous histogram equalization.
 
     Redistributes iteration values so the full color palette is used evenly,
     preventing large washed-out single-color regions.
+
+    The mapping interpolates the CDF between bin centers rather than assigning
+    each bin a single output value. The old step-function mapping quantized
+    deep-zoom frames — whose narrow iteration range concentrates many pixels
+    per bin — into hard-edged posterized color bands (the "shattered polygon"
+    artifact). A piecewise-linear CDF is continuous and monotone, so smooth
+    input gradients stay smooth.
 
     Args:
         smooth_data: 2D array of smooth iteration counts (-1.0 for interior).
@@ -35,20 +42,52 @@ def histogram_equalize(
 
     ext_vals = smooth_data[exterior]
 
-    # Build histogram and CDF
     hist, bin_edges = np.histogram(ext_vals, bins=num_bins)
     cdf = np.cumsum(hist).astype(np.float64)
     cdf = cdf / cdf[-1]  # normalize to [0, 1]
+    bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
 
-    # Map each value through the CDF
-    # Find which bin each value falls into
-    bin_indices = np.searchsorted(bin_edges[:-1], ext_vals) - 1
-    bin_indices = np.clip(bin_indices, 0, num_bins - 1)
-
-    # Remap to [0, palette_len) via CDF
     result = smooth_data.copy()
-    result[exterior] = cdf[bin_indices] * palette_len
+    result[exterior] = np.interp(ext_vals, bin_centers, cdf) * palette_len
+    return result
 
+
+def normalize_range(
+    smooth_data: np.ndarray,
+    palette_len: int,
+    cycles: float = 3.0,
+    p_lo: float = 1.0,
+    p_hi: float = 99.0,
+) -> np.ndarray:
+    """Map smooth iterations linearly over their percentile range.
+
+    An alternative to histogram EQ with a very different character: instead of
+    equal palette area per pixel population, the palette sweeps linearly from
+    the p_lo to the p_hi percentile of the frame. Dense filament regions get a
+    glowing, high-contrast look while sparse regions stay dark and moody —
+    especially striking on deep-zoom frames.
+
+    Args:
+        smooth_data: 2D array of smooth iteration counts (-1.0 for interior).
+        palette_len: Palette length (output spans cycles * palette_len).
+        cycles: Number of palette sweeps across the value range.
+        p_lo, p_hi: Percentile window of exterior values to span.
+
+    Returns:
+        2D array with remapped values; interior pixels (-1.0) unchanged.
+    """
+    exterior = smooth_data >= 0
+    if not np.any(exterior):
+        return smooth_data
+
+    ext_vals = smooth_data[exterior]
+    lo = np.percentile(ext_vals, p_lo)
+    hi = np.percentile(ext_vals, p_hi)
+    span = max(hi - lo, 1e-9)
+
+    result = smooth_data.copy()
+    # Values below lo clamp to 0 so they stay at the palette start (dark end).
+    result[exterior] = np.maximum(ext_vals - lo, 0.0) / span * palette_len * cycles
     return result
 
 
@@ -196,6 +235,7 @@ def apply_palette(
     cycle_offset: float = 0.0,
     log_scaling: bool = False,
     distance_data: np.ndarray | None = None,
+    color_mode: str | None = None,
 ) -> np.ndarray:
     """Map smooth iteration data to RGB using a color palette.
 
@@ -204,6 +244,7 @@ def apply_palette(
         palette: Nx3 uint8 array defining the color gradient.
         interior_color: RGB tuple for interior (non-escaping) points.
         histogram: If True, apply histogram equalization before palette mapping.
+            (Legacy flag — equivalent to color_mode="histogram".)
         slope_shading: If True, apply 3D slope-based lighting.
         light_angle: Light direction angle in radians (for slope shading).
         light_elevation: Light elevation angle in radians (for slope shading).
@@ -212,6 +253,10 @@ def apply_palette(
         specular: Specular highlight intensity (for slope shading).
         shininess: Specular exponent (for slope shading).
         cycle_offset: Palette offset for color cycling animation (0.0 = no shift).
+        color_mode: Value-to-palette mapping: "default" (raw cycling),
+            "histogram" (continuous EQ — balanced contrast everywhere), or
+            "normalized" (linear percentile sweep — dark, glowing look).
+            None falls back to the histogram flag.
 
     Returns:
         3D uint8 array (height x width x 3) of RGB pixel data.
@@ -219,6 +264,9 @@ def apply_palette(
     height, width = smooth_data.shape
     rgb = np.zeros((height, width, 3), dtype=np.uint8)
     palette_len = len(palette)
+
+    if color_mode is None:
+        color_mode = "histogram" if histogram else "default"
 
     # Compute slope shading before histogram EQ (needs raw iteration topology)
     lighting = None
@@ -251,9 +299,11 @@ def apply_palette(
                 palette_len / np.log1p(smooth_data[exterior_mask].max())
             )
 
-    # Optionally remap values via histogram equalization
-    if histogram:
+    # Remap values to palette space per the selected color mode
+    if color_mode == "histogram":
         smooth_data = histogram_equalize(smooth_data, palette_len)
+    elif color_mode == "normalized":
+        smooth_data = normalize_range(smooth_data, palette_len)
 
     # Process in row chunks to avoid OOM on large SSAA renders.
     target_pixels = 8_000_000
@@ -313,6 +363,7 @@ def smooth_to_image(
     cycle_offset: float = 0.0,
     log_scaling: bool = False,
     distance_data: np.ndarray | None = None,
+    color_mode: str | None = None,
 ) -> Image.Image:
     """Convert smooth iteration data to a PIL Image.
 
@@ -347,5 +398,6 @@ def smooth_to_image(
         cycle_offset=cycle_offset,
         log_scaling=log_scaling,
         distance_data=distance_data,
+        color_mode=color_mode,
     )
     return Image.fromarray(rgb, mode="RGB")

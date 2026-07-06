@@ -54,6 +54,9 @@ class ViewerState:
     contrast: float = 1.0
     saturation: float = 1.0
     brightness: float = 1.0
+    # Palette mapping: "auto" picks histogram EQ at deep zoom, raw cycling
+    # shallow. Explicit: "default" | "histogram" | "normalized" (glow).
+    color_mode: str = "auto"
 
     # Auto max-iter: automatically scale iterations with zoom depth
     auto_max_iter: bool = True

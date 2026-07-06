@@ -64,11 +64,14 @@ def render_single(
     fractal_type: str = "mandelbrot",
     julia_re: float | None = None,
     julia_im: float | None = None,
+    color_mode: str | None = None,
 ) -> Image.Image:
     """Render a single Mandelbrot frame as a PIL Image.
 
     Automatically selects perturbation theory for deep zooms (>= 1e13).
     Coordinates can be passed as strings to preserve precision at deep zoom.
+    color_mode selects the value-to-palette mapping ("default", "histogram",
+    "normalized"); None falls back to the histogram flag.
     """
     palette = get_palette(palette_name)
 
@@ -134,6 +137,7 @@ def render_single(
         cycle_offset=cycle_offset,
         log_scaling=log_scaling,
         distance_data=dist_data,
+        color_mode=color_mode,
     )
 
     # Downsample if supersampled (box filter = proper area average)
@@ -188,6 +192,7 @@ def render_and_save(
     fractal_type: str = "mandelbrot",
     julia_re: float | None = None,
     julia_im: float | None = None,
+    color_mode: str | None = None,
 ) -> Path:
     """Render a single frame and save to disk. See render_single() for args."""
     output_path = Path(output_path)
@@ -224,6 +229,7 @@ def render_and_save(
         fractal_type=fractal_type,
         julia_re=julia_re,
         julia_im=julia_im,
+        color_mode=color_mode,
     )
     img.save(output_path)
     return output_path
