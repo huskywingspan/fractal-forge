@@ -37,7 +37,9 @@ def compute_path_data(zoom_path, mode: str | None = None) -> dict:
         params = zoom_path.interpolate(i)
         center_re[i] = params["center_re"]
         center_im[i] = params["center_im"]
-        zoom[i] = params["zoom"]
+        # zoom may be a string at extreme depth; plot from the finite log10
+        # value, clamped to float range so the diagnostic never overflows.
+        zoom[i] = 10.0 ** min(params.get("log10_zoom", 0.0), 307.0)
 
     # Restore original mode
     zoom_path.interpolation = original_mode

@@ -159,15 +159,16 @@
 | DZ-P2-14 | Viewer: in-app Misiurewicz finder | ✅ Done | "Misiurewicz" button -> dive to target |
 | DZ-P2-15 | CLI: `misiurewicz` command | ✅ Done | Find pre-periodic deep targets from the CLI |
 
-## Sprint DZ-P3 (Planned): Deep-Zoom Video
+## Sprint DZ-P3: Deep-Zoom Video
 
 *Goal: Render zoom animations beyond 1e307 (string-zoom through the video pipeline).*
 
 | ID | Item | Status | Notes |
 |----|------|--------|-------|
-| DZ-P3-01 | String/log10 zoom in `Keyframe`/`ZoomPath` | 🔲 Todo | Currently float, caps at ~1e307 |
-| DZ-P3-02 | mpmath exponential zoom interpolation past 1e307 | 🔲 Todo | per-frame zoom as log10 |
-| DZ-P3-03 | Viewer video panel: unbounded target zoom | 🔲 Todo | remove float cap |
+| DZ-P3-01 | String/log10 zoom in `Keyframe`/`ZoomPath` | ✅ Done | `zoom: float \| str`, `zoom_log10` property |
+| DZ-P3-02 | log10 exponential zoom interpolation past 1e307 | ✅ Done | legacy + cinematic interp in log10; result carries `log10_zoom`; zoom emitted as string when > 1e300 |
+| DZ-P3-03 | Viewer video panel: unbounded target zoom | ✅ Done | uses `state.zoom_str`; depth-scaled end max_iter |
+| DZ-P3-05 | Sequence dispatch + CLI/preview deep-safe | ✅ Done | engine dispatch on `log10_zoom`; zoom-cmd, thumbnail, camera-path labels deep-safe; `tests/test_deep_video.py` |
 | DZ-P3-04 | Distance-estimation coloring for deep frames | 🔲 Todo | reduce histogram banding at depth |
 
 ## Phase 5: Production & Scaling

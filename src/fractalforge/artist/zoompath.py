@@ -17,6 +17,38 @@ from pathlib import Path
 import json
 import math
 
+# Above this log10(zoom) the level exceeds float64 range (~1e308) and must be
+# carried as a string. Mirrors DEEP_FXP cutoffs used elsewhere; 300 leaves
+# headroom below the 1e308 ceiling.
+_FLOAT_ZOOM_LOG10_MAX = 300.0
+
+
+def _zoom_log10(zoom: float | str) -> float:
+    """log10 of a zoom value that may be a float or an arbitrary-depth string.
+
+    Strings (e.g. "1e500") let zoom video keyframes exceed float64's 1e308
+    ceiling, which is what enables deep-zoom *animation* past 1e308.
+    """
+    if isinstance(zoom, (int, float)):
+        return math.log10(zoom) if zoom > 0 else 0.0
+    import mpmath
+    with mpmath.workdps(30):
+        z = mpmath.mpf(zoom)
+        return float(mpmath.log10(z)) if z > 0 else 0.0
+
+
+def _zoom_from_log10(log10_zoom: float) -> float | str:
+    """Zoom value from log10: a float when representable, else a string.
+
+    The renderer (render_frame_perturbation) accepts either, so deep frames
+    just pass the string straight through.
+    """
+    if log10_zoom < _FLOAT_ZOOM_LOG10_MAX:
+        return 10.0 ** log10_zoom
+    import mpmath
+    with mpmath.workdps(20):
+        return mpmath.nstr(mpmath.power(10, log10_zoom), 12)
+
 
 @dataclass
 class Keyframe:
@@ -25,7 +57,9 @@ class Keyframe:
     frame: int  # Frame number where this keyframe occurs
     center_re: float = -0.75
     center_im: float = 0.0
-    zoom: float = 1.0
+    # Zoom level. A float for normal depths; pass a string (e.g. "1e500") for
+    # deep-zoom video beyond float64's 1e308 ceiling.
+    zoom: float | str = 1.0
     max_iter: int = 1000
     palette: str = "ocean"
     rotation: float = 0.0  # Degrees, future use
@@ -37,6 +71,11 @@ class Keyframe:
     # High-precision coordinate strings for deep zoom (zoom >= 1e13)
     center_re_hp: str | None = None
     center_im_hp: str | None = None
+
+    @property
+    def zoom_log10(self) -> float:
+        """log10 of this keyframe's zoom, valid at any depth."""
+        return _zoom_log10(self.zoom)
 
 
 @dataclass
@@ -84,6 +123,7 @@ class ZoomPath:
             "center_re": kf.center_re,
             "center_im": kf.center_im,
             "zoom": kf.zoom,
+            "log10_zoom": kf.zoom_log10,
             "max_iter": kf.max_iter,
             "palette": kf.palette,
             "fractal_type": kf.fractal_type,
@@ -119,20 +159,26 @@ class ZoomPath:
                 span = kf1.frame - kf0.frame
                 t = (frame - kf0.frame) / span if span > 0 else 0.0
 
-                log_zoom0 = math.log(kf0.zoom)
-                log_zoom1 = math.log(kf1.zoom)
-                zoom = math.exp(log_zoom0 + t * (log_zoom1 - log_zoom0))
+                # Interpolate zoom in log10 space so depth is never capped by
+                # float64's 1e308 ceiling. log10(zoom) is just a finite float
+                # (e.g. 500.0); the zoom value itself becomes a string when deep.
+                l0 = kf0.zoom_log10
+                l1 = kf1.zoom_log10
+                log10_zoom = l0 + t * (l1 - l0)
+                zoom = _zoom_from_log10(log10_zoom)
 
                 # Use mpmath for coordinate interpolation at deep zoom
                 # to prevent float64 precision loss
                 target_has_hp = (kf1.center_re_hp is not None
                                  and kf1.center_im_hp is not None)
-                if zoom >= 1e13 and target_has_hp:
+                if log10_zoom >= 13.0 and target_has_hp:
                     center_re, center_im, hp_re, hp_im = (
-                        self._interp_coords_hp(kf0, kf1, zoom)
+                        self._interp_coords_hp(kf0, kf1, log10_zoom)
                     )
                 else:
-                    zoom_ratio = kf0.zoom / zoom
+                    # Zoom-weighted: ratio = start_zoom / current = 10^(l0-log10_zoom).
+                    # Underflows to 0 at deep zoom, locking center on target (correct).
+                    zoom_ratio = 10.0 ** (l0 - log10_zoom)
                     center_re = kf1.center_re + (kf0.center_re - kf1.center_re) * zoom_ratio
                     center_im = kf1.center_im + (kf0.center_im - kf1.center_im) * zoom_ratio
                     hp_re = None
@@ -153,6 +199,7 @@ class ZoomPath:
                     "center_re": center_re,
                     "center_im": center_im,
                     "zoom": zoom,
+                    "log10_zoom": log10_zoom,
                     "max_iter": max_iter,
                     "palette": palette,
                     "fractal_type": fractal_type,
@@ -167,16 +214,17 @@ class ZoomPath:
         raise ValueError(f"Frame {frame} not in keyframe range")
 
     @staticmethod
-    def _interp_coords_hp(kf0, kf1, zoom):
+    def _interp_coords_hp(kf0, kf1, log10_zoom):
         """Interpolate coordinates using mpmath for deep zoom precision.
 
         The zoom-weighted formula: pos = target + (start - target) * (start_zoom / zoom)
         At deep zoom, (start - target) is large and zoom is huge, so the offset
         shrinks to sub-float64 scale. mpmath keeps the needed precision.
+        ``log10_zoom`` is the current (interpolated) zoom in log10, valid at any depth.
         """
         import mpmath
         # Use enough precision for the target zoom
-        digits = max(20, int(math.log10(zoom)) + 20)
+        digits = max(20, int(log10_zoom) + 20)
         mpmath.mp.dps = digits
 
         # Use hp strings when available, fall back to float
@@ -185,7 +233,8 @@ class ZoomPath:
         re1 = mpmath.mpf(kf1.center_re_hp)
         im1 = mpmath.mpf(kf1.center_im_hp)
 
-        zoom_ratio = mpmath.mpf(kf0.zoom) / mpmath.mpf(zoom)
+        # ratio = start_zoom / current_zoom = 10^(l0 - log10_zoom)
+        zoom_ratio = mpmath.power(10, mpmath.mpf(kf0.zoom_log10 - log10_zoom))
         center_re_mp = re1 + (re0 - re1) * zoom_ratio
         center_im_mp = im1 + (im0 - im1) * zoom_ratio
 
@@ -221,6 +270,11 @@ class ZoomPath:
         if n <= 2:
             return self._interpolate_legacy(frame)
 
+        # Beyond float64 range the screen-space spline products overflow.
+        # Legacy interpolation is unbounded, so defer deep paths to it.
+        if any(kf.zoom_log10 >= _FLOAT_ZOOM_LOG10_MAX for kf in kfs):
+            return self._interpolate_legacy(frame)
+
         # --- Zoom: eased exponential interpolation ---
         # Find which segment we're in for easing
         seg_idx = 0
@@ -238,18 +292,21 @@ class ZoomPath:
         easing_fn = get_easing(kf1.easing)
         t_eased = easing_fn(t_raw)
 
-        # Exponential zoom with easing
-        log_zoom0 = math.log(kf0.zoom)
-        log_zoom1 = math.log(kf1.zoom)
-        zoom = math.exp(log_zoom0 + t_eased * (log_zoom1 - log_zoom0))
+        # Exponential zoom with easing, in log10 space (deep-safe up to the
+        # float guard above). zoom stays a float here since paths beyond
+        # _FLOAT_ZOOM_LOG10_MAX already deferred to legacy.
+        l0 = kf0.zoom_log10
+        l1 = kf1.zoom_log10
+        log10_zoom = l0 + t_eased * (l1 - l0)
+        zoom = 10.0 ** log10_zoom
 
         # --- Position: Catmull-Rom spline in zoom-scaled screen space ---
         # Transform keyframe positions to screen space relative to final target
         ref_re = kfs[-1].center_re
         ref_im = kfs[-1].center_im
 
-        screen_re = [(kf.center_re - ref_re) * kf.zoom for kf in kfs]
-        screen_im = [(kf.center_im - ref_im) * kf.zoom for kf in kfs]
+        screen_re = [(kf.center_re - ref_re) * (10.0 ** kf.zoom_log10) for kf in kfs]
+        screen_im = [(kf.center_im - ref_im) * (10.0 ** kf.zoom_log10) for kf in kfs]
 
         # Compute global spline parameter: map frame to [0, n-1]
         # Each segment maps to a unit interval on the spline
@@ -280,6 +337,7 @@ class ZoomPath:
             "center_re": center_re,
             "center_im": center_im,
             "zoom": zoom,
+            "log10_zoom": log10_zoom,
             "max_iter": max_iter,
             "palette": palette,
             "fractal_type": fractal_type,

@@ -5,6 +5,7 @@ and configurable output format. Automatically switches to perturbation
 theory for deep zoom frames (zoom >= 1e13).
 """
 
+import math
 import time
 from pathlib import Path
 
@@ -15,8 +16,9 @@ from fractalforge.artist.zoompath import ZoomPath
 from fractalforge.engine.coloring import smooth_to_image
 from fractalforge.engine.mandelbrot import render_frame
 
-# Zoom threshold matching frame_renderer.py
-_DEEP_ZOOM_THRESHOLD = 1e13
+# log10(zoom) threshold for perturbation theory, matching frame_renderer.py
+# (zoom >= 1e13). Compared in log space so string zooms beyond 1e308 work.
+_DEEP_ZOOM_LOG10 = 13.0
 
 
 def render_sequence(
@@ -83,7 +85,13 @@ def render_sequence(
         palette = get_palette(params["palette"])
 
         # Render at supersampled resolution
-        frame_zoom = params["zoom"]
+        frame_zoom = params["zoom"]  # float, or a string for depths > 1e308
+        # log10(zoom) is always a finite float -- use it for engine dispatch so
+        # a string zoom (deep video) doesn't break the numeric comparison.
+        log10_zoom = params.get("log10_zoom")
+        if log10_zoom is None:
+            log10_zoom = math.log10(frame_zoom) if (
+                isinstance(frame_zoom, (int, float)) and frame_zoom > 0) else 0.0
         ftype = params.get("fractal_type", "mandelbrot")
 
         if ftype == "julia":
@@ -110,9 +118,12 @@ def render_sequence(
                 max_iter=params["max_iter"],
                 use_gpu=use_gpu,
             )
-        elif frame_zoom >= _DEEP_ZOOM_THRESHOLD:
+        elif log10_zoom >= _DEEP_ZOOM_LOG10:
             from fractalforge.engine.perturbation import render_frame_perturbation
-            # Use hp strings when available for full precision at deep zoom
+            # Use hp strings when available for full precision at deep zoom.
+            # frame_zoom may be a string (e.g. "1e500") for unbounded depth;
+            # render_frame_perturbation accepts string zoom and routes to the
+            # floatexp deep kernel automatically.
             re_str = params.get("center_re_hp") or str(params["center_re"])
             im_str = params.get("center_im_hp") or str(params["center_im"])
             smooth_data = render_frame_perturbation(

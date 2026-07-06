@@ -4,7 +4,7 @@
 >
 > **For Copilot Agents:** Reference this document when working on FractalForge to avoid repeating past mistakes and understand why things are built the way they are.
 >
-> **Version:** 5.0 (June 13, 2026) -- DZ-P2: floatexp deep-zoom engine (unbounded magnification to 1e600+), Misiurewicz target finder, and a fully overhauled premium interactive viewer.
+> **Version:** 5.1 (June 13, 2026) -- DZ-P3: unbounded deep-zoom *video* (string/log10 zoom through the keyframe pipeline). DZ-P2: floatexp deep-zoom engine (unbounded magnification to 1e600+), Misiurewicz target finder, and a fully overhauled premium interactive viewer.
 
 ---
 
@@ -554,6 +554,52 @@ navigation, and a premium feel.
    violet), unified collapsing sidebar, and a status bar showing zoom (10^x),
    engine badge (STD/PT/FXP), iterations, precision digits, and render time.
 
-**Known follow-up:** the in-viewer *video* path still uses float zoom (capped at
-~1e307). Deep-zoom *stills* are unbounded; deep-zoom *video* beyond 1e307 needs
-string-zoom plumbing through `zoompath.py` / `sequence.py` (DZ-P3).
+**Resolved in DZ-P3 (AD-017):** the in-viewer *video* path now plumbs string
+zoom end-to-end, so deep-zoom *video* is unbounded like the stills.
+
+---
+
+### AD-017: Unbounded Deep-Zoom Video (DZ-P3)
+
+**Date:** 2026-06-13
+**Decision:** Carry zoom through the video pipeline in log10 space so zoom
+*animation* is no longer capped at float64's 1e308 ceiling — matching the
+already-unbounded stills.
+
+**Problem:** `Keyframe.zoom` was a float and interpolation used
+`math.exp(log_zoom0 + t*(log_zoom1-log_zoom0))`, which overflows to `inf` past
+~1e308. Stills already accepted string zoom (DZ-P2), but video keyframes,
+interpolation, and the sequence dispatch did not — so dives stalled at ~1e307.
+
+**Changes:**
+
+1. **`artist/zoompath.py`** — `Keyframe.zoom: float | str` (e.g. `"1e500"`),
+   with a `zoom_log10` property. Both legacy and cinematic interpolation now run
+   in **log10 space**: `log10_zoom = l0 + t*(l1-l0)` is always a finite float;
+   the emitted `zoom` is a float when < 1e300 and an mpmath-formatted string
+   beyond. Result dicts carry `log10_zoom`. Zoom-weighted position interp uses
+   `10^(l0-log10_zoom)` (underflows to 0 → target locked, which is correct).
+   Cinematic paths with any keyframe beyond float range defer to legacy (whose
+   math is unbounded), since the screen-space spline products would overflow.
+2. **`render/sequence.py`** — engine dispatch branches on `log10_zoom` (a finite
+   float), not a `zoom >= 1e13` float comparison that `TypeError`s on a string.
+   String zoom passes straight to `render_frame_perturbation`, which routes
+   >= 1e18 to the floatexp deep kernel.
+3. **`viewer/video_panel.py`** — the target keyframe uses `state.zoom_str`, and
+   the end keyframe's `max_iter` scales with depth (`~400 * log10_zoom`).
+4. **Deep-safe labels** — `zoom` CLI summary, thumbnail zoom text, and
+   `camera-path` preview plot all derive from `zoom_log10` so a string zoom
+   never reaches float-only formatting / numpy float arrays.
+
+**Validation:** `tests/test_deep_video.py` (8 tests: string-zoom round-trip,
+log10 monotonicity past the float ceiling, float-vs-string emission, target
+lock). End-to-end: a 1 → 1e400 dive into the M(22,1) Misiurewicz target renders
+coherent structure at every frame, including frames carried as strings past
+1e308. Shallow paths are byte-for-byte unchanged (midpoint of 1→50000 is still
+the geometric mean √50000).
+
+**Lesson (LL-007):** Hand-authored deep video presets must carry a target
+coordinate with enough digits for the *final* depth (≈ `1.5*log10(zoom)+30`).
+The interpolator requests precision per frame; a coordinate truncated to fewer
+digits silently lands in a featureless interior region at depth. The viewer
+accumulates this precision automatically as you zoom; presets must supply it.

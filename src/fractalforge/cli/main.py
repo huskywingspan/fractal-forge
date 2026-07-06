@@ -362,7 +362,11 @@ def zoom(
     if zoom_path.keyframes:
         kf_first = zoom_path.keyframes[0]
         kf_last = zoom_path.keyframes[-1]
-        console.print(f"  Zoom:      {kf_first.zoom:.2e} -> {kf_last.zoom:.2e}")
+
+        def _zfmt(kf):
+            lz = kf.zoom_log10
+            return f"{10.0 ** lz:.2e}" if lz < 290 else f"10^{lz:.1f}"
+        console.print(f"  Zoom:      {_zfmt(kf_first)} -> {_zfmt(kf_last)}")
     if ss > 1:
         console.print(f"  SSAA:      {ss}x ({ss*ss} samples/pixel)")
     if histogram:
@@ -570,10 +574,15 @@ def thumbnail(path: str, samples: int, output_dir: str | None, title: str | None
     # Determine frames directory (same convention as zoom command)
     frames_dir = Path(f"output/{zoom_path.name}_frames")
 
-    # Get final zoom level for the zoom text
+    # Get final zoom level for the zoom text (deep-safe: zoom may be a string)
     if zoom_path.keyframes:
-        final_zoom = zoom_path.keyframes[-1].zoom
-        zoom_text = format_zoom(final_zoom)
+        lz = zoom_path.keyframes[-1].zoom_log10
+        if lz < 290:
+            final_zoom = 10.0 ** lz
+            zoom_text = format_zoom(final_zoom)
+        else:
+            final_zoom = 1e290
+            zoom_text = f"10^{lz:.0f} x"
     else:
         final_zoom = 1.0
         zoom_text = None

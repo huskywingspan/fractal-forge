@@ -209,12 +209,14 @@ class VideoRenderPanel:
         log_scaling = dpg.get_value("video_log_scaling")
         cycle_speed = dpg.get_value("video_cycle_speed")
 
-        # Snapshot viewer state for the target
+        # Snapshot viewer state for the target. Use zoom_str (deep-safe) so the
+        # target keyframe can exceed float64's 1e308 ceiling for deep-zoom video.
         target_re_hp = self.state.center_re_hp
         target_im_hp = self.state.center_im_hp
         target_re = self.state.center_re
         target_im = self.state.center_im
-        target_zoom = self.state.zoom
+        target_zoom = self.state.zoom_str
+        target_log10 = self.state.log10_zoom
         target_max_iter = self.state.max_iter
         palette = self.state.palette_name
         fractal_type = self.state.fractal_type
@@ -232,7 +234,7 @@ class VideoRenderPanel:
                 width, height, duration, fps, preset, ssaa, histogram,
                 slope_shading, log_scaling, cycle_speed,
                 target_re, target_im, target_re_hp, target_im_hp,
-                target_zoom, target_max_iter, palette,
+                target_zoom, target_log10, target_max_iter, palette,
                 fractal_type, julia_re, julia_im,
             ),
             daemon=True,
@@ -248,7 +250,7 @@ class VideoRenderPanel:
         self, width, height, duration, fps, preset, ssaa, histogram,
         slope_shading, log_scaling, cycle_speed,
         target_re, target_im, target_re_hp, target_im_hp,
-        target_zoom, target_max_iter, palette,
+        target_zoom, target_log10, target_max_iter, palette,
         fractal_type, julia_re, julia_im,
     ):
         """Background thread: render frames + encode video."""
@@ -261,6 +263,10 @@ class VideoRenderPanel:
 
             # Auto-compute max_iter for the start keyframe
             start_max_iter = max(500, target_max_iter // 4)
+            # Ensure the deep end keyframe has enough iterations for its depth
+            # (the final-frame structure needs ~linear-in-depth iterations).
+            end_max_iter = max(target_max_iter,
+                               min(int(800 + 400 * target_log10), 120000))
 
             # Build a simple two-keyframe zoom path:
             # Frame 0: overview at zoom=1, centered on Mandelbrot
@@ -284,7 +290,7 @@ class VideoRenderPanel:
                 center_re=target_re,
                 center_im=target_im,
                 zoom=target_zoom,
-                max_iter=target_max_iter,
+                max_iter=end_max_iter,
                 palette=palette,
                 fractal_type=fractal_type,
                 julia_re=julia_re if fractal_type == "julia" else None,
