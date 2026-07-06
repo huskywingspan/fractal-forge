@@ -21,10 +21,11 @@ from fractalforge.viewer.state import ViewerState, DEEP_ZOOM_LOG10, DEEP_FXP_LOG
 def auto_max_iter(log10_zoom: float, user_max_iter: int, auto: bool = True) -> int:
     """Effective max_iter for a zoom depth.
 
-    Shallow zooms need head-room for long-period orbits (300/decade). Beyond
-    the perturbation threshold the dominant cost is embedded-Julia escape depth,
-    which grows only modestly with log-zoom, so we use a gentler 60/decade to
-    keep extreme renders tractable.
+    ~300 iterations per decade of zoom at all depths. An earlier 60/decade
+    slope in the deep regime was far too stingy in practice: escape depth
+    depends on location, and structure-rich spots (near-parabolic antennas,
+    minibrot shadows) routinely need several times the embedded-Julia
+    baseline — users had to raise iterations by hand to keep diving.
 
     The result is quantized upward to coarse steps so that consecutive zoom
     levels share the same iteration budget — this is what lets the
@@ -37,19 +38,21 @@ def auto_max_iter(log10_zoom: float, user_max_iter: int, auto: bool = True) -> i
         floor = int(500 + 300 * log10_zoom)
         step = 1000
     else:
-        floor = int(2000 + 60 * log10_zoom)
+        floor = int(3000 + 400 * log10_zoom)
         step = 2000
     floor = ((floor + step - 1) // step) * step
     return max(user_max_iter, floor)
 
 
 def engine_label(state: ViewerState) -> str:
-    """Short badge for which engine the current zoom will use."""
+    """Short badge for which engine the current view will use."""
+    if state.fractal_type == "julia":
+        return "JPT" if state.needs_perturbation else "julia"
     if state.fractal_type != "mandelbrot":
         return state.fractal_type
     if state.log10_zoom >= DEEP_FXP_LOG10:
         return "FXP"      # floatexp deep kernel
-    if state.log10_zoom >= DEEP_ZOOM_LOG10:
+    if state.needs_perturbation:
         return "PT"       # perturbation theory (float64 deltas)
     return "STD"          # standard float64
 

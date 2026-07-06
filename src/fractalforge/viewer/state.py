@@ -19,8 +19,12 @@ from dataclasses import dataclass, field
 import mpmath
 
 # log10(zoom) thresholds for engine selection (mirror the render pipeline).
-DEEP_ZOOM_LOG10 = 13.0   # perturbation theory kicks in
-DEEP_FXP_LOG10 = 18.0    # floatexp deep kernel takes over
+DEEP_ZOOM_LOG10 = 13.0   # legacy constant (engine choice is now spacing-aware)
+DEEP_FXP_LOG10 = 13.0    # floatexp deep kernel takes over
+
+# Standard float64 collapses when pixel spacing nears its ulp at |c| ~ 2
+# (duplicate-column streaks); mirror frame_renderer._MIN_STD_PIXEL_SPACING.
+MIN_STD_PIXEL_SPACING = 2e-14
 
 
 @dataclass
@@ -115,9 +119,17 @@ class ViewerState:
 
     @property
     def needs_perturbation(self) -> bool:
-        """True if current zoom requires perturbation theory."""
-        return (self.log10_zoom >= DEEP_ZOOM_LOG10
-                and self.fractal_type == "mandelbrot")
+        """True when the standard float64 engine can't resolve pixels.
+
+        Resolution-aware: a 1080-row preview leaves float64 around ~1.4e11,
+        a small preview around ~2e12. Julia has its own perturbation path;
+        burning ship remains float64-only.
+        """
+        if self.fractal_type not in ("mandelbrot", "julia"):
+            return False
+        log10_spacing = (math.log10(3.0) - self.log10_zoom
+                         - math.log10(max(self.preview_height, 1)))
+        return log10_spacing < math.log10(MIN_STD_PIXEL_SPACING)
 
     @property
     def needs_deep_fxp(self) -> bool:

@@ -5,7 +5,6 @@ and configurable output format. Automatically switches to perturbation
 theory for deep zoom frames (zoom >= 1e13).
 """
 
-import math
 import time
 from pathlib import Path
 
@@ -15,10 +14,7 @@ from fractalforge.artist.palette import get_palette
 from fractalforge.artist.zoompath import ZoomPath
 from fractalforge.engine.coloring import smooth_to_image
 from fractalforge.engine.mandelbrot import render_frame
-
-# log10(zoom) threshold for perturbation theory, matching frame_renderer.py
-# (zoom >= 1e13). Compared in log space so string zooms beyond 1e308 work.
-_DEEP_ZOOM_LOG10 = 13.0
+from fractalforge.render.frame_renderer import needs_perturbation
 
 
 def render_sequence(
@@ -101,12 +97,6 @@ def render_sequence(
 
         # Render at supersampled resolution
         frame_zoom = params["zoom"]  # float, or a string for depths > 1e308
-        # log10(zoom) is always a finite float -- use it for engine dispatch so
-        # a string zoom (deep video) doesn't break the numeric comparison.
-        log10_zoom = params.get("log10_zoom")
-        if log10_zoom is None:
-            log10_zoom = math.log10(frame_zoom) if (
-                isinstance(frame_zoom, (int, float)) and frame_zoom > 0) else 0.0
         ftype = params.get("fractal_type", "mandelbrot")
 
         if ftype == "julia":
@@ -114,8 +104,8 @@ def render_sequence(
             smooth_data = render_frame_julia(
                 c_re=params.get("julia_re") or -0.7269,
                 c_im=params.get("julia_im") or 0.1889,
-                center_re=params["center_re"],
-                center_im=params["center_im"],
+                center_re=params.get("center_re_hp") or params["center_re"],
+                center_im=params.get("center_im_hp") or params["center_im"],
                 zoom=frame_zoom,
                 width=render_w,
                 height=render_h,
@@ -133,7 +123,7 @@ def render_sequence(
                 max_iter=params["max_iter"],
                 use_gpu=use_gpu,
             )
-        elif log10_zoom >= _DEEP_ZOOM_LOG10:
+        elif needs_perturbation(frame_zoom, render_h):
             from fractalforge.engine.perturbation import render_frame_perturbation
             # Use hp strings when available for full precision at deep zoom.
             # frame_zoom may be a string (e.g. "1e500") for unbounded depth;

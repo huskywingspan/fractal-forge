@@ -28,14 +28,17 @@ from fractalforge.engine.precision import (
 )
 from fractalforge.engine.bla import compute_bla_table, compute_bla_table_fxp, BLATable
 
-# At/above this log10(zoom) the float64 kernels would need proactive rebasing
-# (|Z+d| < |d| near-zero passages). But float64 rebasing folds d back to O(1),
-# at which point the per-pixel dc (~10^-zoom) underflows the float64 mantissa
-# and pixels lose their identity — manifesting as false-interior blocks,
-# especially for bounded (Misiurewicz / dendrite) references. The floatexp
-# deep kernel keeps dc at full precision through rebasing, so we hand off to
-# it exactly where rebasing engages rather than limping along in float64.
-DEEP_FXP_LOG10 = 18.0
+# At/above this log10(zoom) frames route to the floatexp deep kernel.
+#
+# The float64 PT kernels run WITHOUT rebasing (float64 rebasing folds d to
+# O(1) where the per-pixel dc underflows the mantissa — false-interior
+# blocks), which means they quietly lose precision whenever the reference
+# orbit passes near zero: user testing showed moire rings at 4.6e17 near the
+# antenna. The fxp kernel handles those passages exactly via rebasing, so it
+# owns everything from 1e13 up; float64 PT keeps only the narrow, safe window
+# between the resolution-aware standard-engine cutoff (~1e11 at 1080p) and
+# 1e13, where deltas are large enough that near-zero passages are harmless.
+DEEP_FXP_LOG10 = 13.0
 
 
 # ============================================================================

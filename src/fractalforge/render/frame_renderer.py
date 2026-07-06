@@ -6,6 +6,7 @@ based on zoom level:
   zoom >= 1e13: perturbation theory (perturbation.py)
 """
 
+import math
 from pathlib import Path
 
 from PIL import Image
@@ -15,22 +16,33 @@ from fractalforge.engine.mandelbrot import render_frame
 from fractalforge.engine.precision import zoom_to_log10
 from fractalforge.artist.palette import get_palette
 
-# Zoom threshold for switching to perturbation theory.
-# At 1e13-1e14, float64 has minor grid artifacts but is more reliable
-# than perturbation for chaotic orbits (period >1000). By 1e15, float64
-# is truly unusable and perturbation is essential.
-_DEEP_ZOOM_THRESHOLD = 1e13
-_DEEP_ZOOM_LOG10 = 13.0
+# Minimum pixel spacing (in the complex plane) the standard float64 engine
+# can resolve. The standard kernel computes c = center + offset in ABSOLUTE
+# coordinates, where one ulp near |c| ~ 2 is ~4.4e-16; below ~100 ulps of
+# spacing, adjacent pixels start collapsing onto identical c values and the
+# image develops duplicate-column streaks. Perturbation avoids this entirely
+# (its dc grid is relative to the center, so tiny spacings stay exact).
+# The threshold is therefore RESOLUTION-AWARE: a 1080-row preview leaves
+# float64 around zoom ~1.4e11, a small thumbnail around ~2e12.
+_MIN_STD_PIXEL_SPACING = 2e-14
 
 
-def _needs_perturbation(zoom: float | str) -> bool:
-    """Return True if zoom level requires perturbation theory.
+def needs_perturbation(zoom: float | str, height: int) -> bool:
+    """True when the standard float64 engine can no longer resolve pixels.
 
     Accepts zoom as a string for depths beyond float64 range (e.g. "1e500").
     """
-    if isinstance(zoom, str):
-        return zoom_to_log10(zoom) >= _DEEP_ZOOM_LOG10
-    return zoom >= _DEEP_ZOOM_THRESHOLD
+    log10_zoom = zoom_to_log10(zoom)
+    # pixel spacing = (3 / zoom) / height; compare in log10 space so string
+    # zooms beyond 1e308 never hit float arithmetic.
+    log10_spacing = math.log10(3.0) - log10_zoom - math.log10(max(height, 1))
+    return log10_spacing < math.log10(_MIN_STD_PIXEL_SPACING)
+
+
+# Backward-compatible alias (some callers only have the zoom value; assume a
+# 1080-row frame, the common preview/production height).
+def _needs_perturbation(zoom: float | str, height: int = 1080) -> bool:
+    return needs_perturbation(zoom, height)
 
 
 def render_single(
@@ -83,11 +95,12 @@ def render_single(
 
     if fractal_type == "julia":
         from fractalforge.engine.julia import render_frame_julia
+        # Pass center as-is: strings preserve precision for deep Julia zoom.
         smooth_data = render_frame_julia(
             c_re=julia_re or -0.7269,
             c_im=julia_im or 0.1889,
-            center_re=float(center_re),
-            center_im=float(center_im),
+            center_re=center_re,
+            center_im=center_im,
             zoom=float(zoom),
             width=render_w,
             height=render_h,
@@ -105,7 +118,7 @@ def render_single(
             max_iter=max_iter,
             use_gpu=use_gpu,
         )
-    elif _needs_perturbation(zoom):
+    elif needs_perturbation(zoom, render_h):
         from fractalforge.engine.perturbation import render_frame_perturbation
         smooth_data = render_frame_perturbation(
             center_re=str(center_re),
